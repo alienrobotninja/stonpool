@@ -40,3 +40,20 @@ get fun packDepositPayload(addr: address): cell {
     val p: DepositPayload = { op: OP_DEPOSIT, beneficiary: addr };
     return p.toCell();
 }
+
+get fun unpackPoolConfig(c: cell): (uint32, uint32, uint32, uint32, uint16, uint8, uint16, coins) {
+    val v = PoolConfig.fromCell(c);
+    return (v.epochLength, v.depositCutoff, v.commitWindow, v.revealWindow, v.minHoldEpochs, v.prizeTiers, v.skimBps, v.drawBond);
+}
+get fun unpackDrawResult(c: cell): (uint32, uint256) {
+    val v = DrawResult.fromCell(c);
+    return (v.epoch, v.seed);
+}
+get fun unpackAdapterReport(c: cell): (uint32, coins, coins, bool) {
+    val v = AdapterReport.fromCell(c);
+    return (v.reportedOp, v.principal, v.yieldAmount, v.success);
+}
+get fun unpackDepositPayload(c: cell): (uint32, address) {
+    val v = DepositPayload.fromCell(c);
+    return (v.op, v.beneficiary);
+}

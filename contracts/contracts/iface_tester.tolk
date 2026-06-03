@@ -20,3 +20,19 @@ get fun packAdapterReportMsg(): cell {
     val m: AdapterReportMsg = { queryId: 42, report: r };
     return m.toCell();
 }
+
+get fun unpackDepositPrincipal(c: cell): uint64 {
+    return DepositPrincipal.fromCell(c).queryId;
+}
+get fun unpackWithdrawPrincipal(c: cell): (uint64, coins, address) {
+    val v = WithdrawPrincipal.fromCell(c);
+    return (v.queryId, v.amount, v.to);
+}
+get fun unpackHarvestYield(c: cell): (uint64, address) {
+    val v = HarvestYield.fromCell(c);
+    return (v.queryId, v.to);
+}
+get fun unpackAdapterReportMsg(c: cell): (uint64, uint32, coins, coins, bool) {
+    val v = AdapterReportMsg.fromCell(c);
+    return (v.queryId, v.report.reportedOp, v.report.principal, v.report.yieldAmount, v.report.success);
+}

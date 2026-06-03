@@ -30,6 +30,10 @@ class Tester implements Contract {
   async getCell(provider: ContractProvider, name: string, stack: any[] = []): Promise<Cell> {
     return (await provider.get(name, stack as any)).stack.readCell();
   }
+
+  async getStack(provider: ContractProvider, name: string, stack: any[] = []) {
+    return (await provider.get(name, stack as any)).stack;
+  }
 }
 
 describe('C5 yield-adapter-iface message layouts', () => {
@@ -77,5 +81,45 @@ describe('C5 yield-adapter-iface message layouts', () => {
       .storeUint(OP_HARVEST_YIELD, 32).storeCoins(5).storeCoins(2).storeBit(true)
       .endCell();
     expect(got).toEqualCell(exp);
+  });
+
+  const cellArg = (c: Cell) => ({ type: 'cell' as const, cell: c });
+
+  it('DepositPrincipal deserializes back to its fields', async () => {
+    const cell = beginCell().storeUint(OP_DEPOSIT_PRINCIPAL, 32).storeUint(42, 64).endCell();
+    const s = await tester.getStack('unpackDepositPrincipal', [cellArg(cell)]);
+    expect(s.readBigNumber()).toBe(42n);
+  });
+
+  it('WithdrawPrincipal deserializes back to its fields', async () => {
+    const to = deployer.address;
+    const cell = beginCell()
+      .storeUint(OP_WITHDRAW_PRINCIPAL, 32).storeUint(42, 64).storeCoins(7).storeAddress(to)
+      .endCell();
+    const s = await tester.getStack('unpackWithdrawPrincipal', [cellArg(cell)]);
+    expect(s.readBigNumber()).toBe(42n);
+    expect(s.readBigNumber()).toBe(7n);
+    expect(s.readAddress().equals(to)).toBe(true);
+  });
+
+  it('HarvestYield deserializes back to its fields', async () => {
+    const to = deployer.address;
+    const cell = beginCell().storeUint(OP_HARVEST_YIELD, 32).storeUint(42, 64).storeAddress(to).endCell();
+    const s = await tester.getStack('unpackHarvestYield', [cellArg(cell)]);
+    expect(s.readBigNumber()).toBe(42n);
+    expect(s.readAddress().equals(to)).toBe(true);
+  });
+
+  it('AdapterReportMsg deserializes back, including the nested report', async () => {
+    const cell = beginCell()
+      .storeUint(OP_ADAPTER_REPORT, 32).storeUint(42, 64)
+      .storeUint(OP_HARVEST_YIELD, 32).storeCoins(5).storeCoins(2).storeBit(true)
+      .endCell();
+    const s = await tester.getStack('unpackAdapterReportMsg', [cellArg(cell)]);
+    expect(s.readBigNumber()).toBe(42n);
+    expect(s.readBigNumber()).toBe(0x10000033n);
+    expect(s.readBigNumber()).toBe(5n);
+    expect(s.readBigNumber()).toBe(2n);
+    expect(s.readBoolean()).toBe(true);
   });
 });
