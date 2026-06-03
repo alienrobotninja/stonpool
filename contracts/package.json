@@ -1,0 +1,27 @@
+{
+  "name": "@stonpool/contracts",
+  "version": "0.0.1",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "build": "blueprint build --all",
+    "test": "jest",
+    "fmt": "prettier --write \"wrappers/**/*.ts\" \"tests/**/*.ts\" \"scripts/**/*.ts\"",
+    "fmt:check": "prettier --check \"wrappers/**/*.ts\" \"tests/**/*.ts\" \"scripts/**/*.ts\""
+  },
+  "devDependencies": {
+    "@ton/blueprint": "^0.40.0",
+    "@ton/core": "^0.62.0",
+    "@ton/crypto": "^3.3.0",
+    "@ton/sandbox": "^0.40.0",
+    "@ton/test-utils": "^0.7.0",
+    "@ton/tolk-js": "^1.0.0",
+    "@ton/ton": "^15.3.0",
+    "@types/jest": "^29.5.12",
+    "@types/node": "^22.10.0",
+    "jest": "^29.7.0",
+    "prettier": "^3.4.0",
+    "ts-jest": "^29.2.5",
+    "typescript": "^5.7.0"
+  }
+}
