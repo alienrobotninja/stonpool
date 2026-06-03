@@ -1,0 +1,58 @@
+# Secrets and keys. Never commit real network credentials or wallet material.
+.env
+.env.*
+!.env.example
+*.mnemonic
+*.seed
+deployer.key
+*.pk
+
+# Node / TS / frontend
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.eslintcache
+
+# Blueprint / TON build artifacts
+temp/
+*.compiled.json
+# keep wrappers/ and tests/ tracked; only ignore generated build output
+contracts/build/
+
+# Python / backend
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+.coverage
+htmlcov/
+
+# Local databases
+*.sqlite
+*.sqlite3
+*.db
+
+# Coverage / reports
+coverage/
+.nyc_output/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Docker
+.dockerignore
