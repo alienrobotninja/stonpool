@@ -140,4 +140,9 @@ describe('C0 shared TL-B layouts', () => {
     expect(s.readBigNumber()).toBe(0x10000001n);
     expect(s.readAddress().equals(addr)).toBe(true);
   });
+
+  it('rejects trailing data on strict decode', async () => {
+    const bad = beginCell().storeUint(7, 32).storeUint(123456789, 256).storeUint(0xff, 8).endCell();
+    await expect(tester.getStack('unpackDrawResult', [cellArg(bad)])).rejects.toThrow();
+  });
 });

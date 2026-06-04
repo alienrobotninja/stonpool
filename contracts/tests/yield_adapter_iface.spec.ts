@@ -122,4 +122,9 @@ describe('C5 yield-adapter-iface message layouts', () => {
     expect(s.readBigNumber()).toBe(2n);
     expect(s.readBoolean()).toBe(true);
   });
+
+  it('rejects a wrong opcode prefix on deserialize', async () => {
+    const bad = beginCell().storeUint(0xdeadbeef, 32).storeUint(42, 64).endCell();
+    await expect(tester.getStack('unpackDepositPrincipal', [cellArg(bad)])).rejects.toThrow();
+  });
 });

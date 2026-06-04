@@ -7,6 +7,7 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
 const OP_JETTON_TRANSFER = 0x0f8a7ea5;
+const OP_EXCESSES = 0xd53276db;
 const CONTRACTS_DIR = resolve(__dirname, '..', 'contracts');
 
 async function compile(entry: string): Promise<Cell> {
@@ -40,6 +41,12 @@ class Tester implements Contract {
     await provider.internal(via, {
       value: 200_000_000n,
       body: beginCell().storeUint(0x1, 32).storeAddress(jw).storeAddress(dest).storeAddress(resp).endCell(),
+    });
+  }
+  async sendExcessesTrigger(provider: ContractProvider, via: Sender, to: Address) {
+    await provider.internal(via, {
+      value: 200_000_000n,
+      body: beginCell().storeUint(0x2, 32).storeAddress(to).endCell(),
     });
   }
   async getCell(provider: ContractProvider, name: string, stack: any[] = []): Promise<Cell> {
@@ -80,5 +87,25 @@ describe('messaging primitives', () => {
       to: jw,
       body: expectedTransfer(dest, resp),
     });
+  });
+
+  it('JettonTransfer packs present custom/forward payloads as refs', async () => {
+    const dest = deployer.address;
+    const resp = deployer.address;
+    const got = await tester.getCell('packJettonTransferFull', [addrSlice(dest), addrSlice(resp)]);
+    const exp = beginCell()
+      .storeUint(OP_JETTON_TRANSFER, 32).storeUint(1, 64).storeCoins(100)
+      .storeAddress(dest).storeAddress(resp)
+      .storeMaybeRef(beginCell().storeUint(0xab, 8).endCell())
+      .storeCoins(5)
+      .storeMaybeRef(beginCell().storeUint(0xcd, 8).endCell())
+      .endCell();
+    expect(got).toEqualCell(exp);
+  });
+
+  it('sendExcesses emits a JettonExcesses body to the target', async () => {
+    const to = randomAddress();
+    const res = await tester.sendExcessesTrigger(deployer.getSender(), to);
+    expect(res.transactions).toHaveTransaction({ from: tester.address, to, op: OP_EXCESSES });
   });
 });
