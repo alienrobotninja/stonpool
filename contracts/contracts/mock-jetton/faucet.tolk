@@ -1,16 +1,17 @@
-// Mock stables faucet. Test infrastructure for STONPool.
-
 // Test faucet for the mock stables. Holds admin rights on both mock minters and,
 // on request, drips a fixed USDT + USDC allocation to the sender, paying mint gas
-// from its own balance. Rate-limiting is added in the next step.
+// from its own balance. A per-address cooldown stops a single address draining it.
 import "messages"
 import "errors"
 
 const FAUCET_WALLET_GAS = ton("0.05")
 const ERR_NOT_CONFIGURED = 800
+const ERR_RATE_LIMITED = 801
 
-// Three addresses + two small coins fits comfortably (~870 bits) for any realistic
-// drip/mintValue; the worst-case estimate only trips on maxed-out coins, which we never set.
+// accountHash -> last claim unix time
+type ClaimsMap = map<uint256, uint32>
+
+// Addresses + coins + the claims dict; bounded well under 1023 bits in practice.
 @overflow1023_policy("suppress")
 struct FaucetStorage {
     adminAddress: address
@@ -18,6 +19,8 @@ struct FaucetStorage {
     usdcMinter: address?
     dripAmount: coins
     mintValue: coins
+    cooldown: uint32
+    claims: ClaimsMap
 }
 
 fun FaucetStorage.load() {
@@ -70,6 +73,16 @@ fun onInternalMessage(in: InMessage) {
         RequestTokens => {
             var storage = lazy FaucetStorage.load();
             assert ((storage.usdtMinter != null) & (storage.usdcMinter != null)) throw ERR_NOT_CONFIGURED;
+
+            val (_, acct) = in.senderAddress.getWorkchainAndHash();
+            val nowTs = blockchain.now() as uint32;
+            val prev = storage.claims.get(acct);
+            if (prev.isFound) {
+                assert (nowTs - prev.loadValue() >= storage.cooldown) throw ERR_RATE_LIMITED;
+            }
+            storage.claims.set(acct, nowTs);
+            storage.save();
+
             sendMint(storage.usdtMinter!, in.senderAddress, storage.dripAmount, storage.mintValue);
             sendMint(storage.usdcMinter!, in.senderAddress, storage.dripAmount, storage.mintValue);
         }
@@ -88,7 +101,14 @@ fun onInternalMessage(in: InMessage) {
     }
 }
 
-get fun get_faucet_data(): (address, address?, address?, coins, coins) {
+get fun get_faucet_data(): (address, address?, address?, coins, coins, uint32) {
     val storage = lazy FaucetStorage.load();
-    return (storage.adminAddress, storage.usdtMinter, storage.usdcMinter, storage.dripAmount, storage.mintValue);
+    return (storage.adminAddress, storage.usdtMinter, storage.usdcMinter, storage.dripAmount, storage.mintValue, storage.cooldown);
+}
+
+get fun get_last_claim(owner: address): uint32 {
+    val storage = lazy FaucetStorage.load();
+    val (_, acct) = owner.getWorkchainAndHash();
+    val r = storage.claims.get(acct);
+    return r.isFound ? r.loadValue() : 0;
 }

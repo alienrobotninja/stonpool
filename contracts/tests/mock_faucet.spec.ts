@@ -1,18 +1,17 @@
-import { Blockchain, SandboxContract, TreasuryContract } from '@ton/sandbox';
+import { Blockchain, SandboxContract, TreasuryContract, internal } from '@ton/sandbox';
 import { Cell, beginCell, contractAddress, Contract, ContractProvider, Sender, Address } from '@ton/core';
 import '@ton/test-utils';
 import { loadCode } from './helpers';
-import { randomAddress } from '@ton/test-utils';
-import { readFileSync } from 'fs';
-import { dirname, join, resolve } from 'path';
 
 const OP_REQUEST = 0x10000052;
 const OP_CONFIGURE = 0x10000053;
 const ERR_NOT_FROM_ADMIN = 73;
 const ERR_NOT_CONFIGURED = 800;
+const ERR_RATE_LIMITED = 801;
 const DRIP = 1000n;
 const MINT_VALUE = 200_000_000n;
-
+const COOLDOWN = 3600;
+const T0 = 1_000_000;
 
 const walletData = (bal: bigint, owner: Address, minter: Address) =>
   beginCell().storeCoins(bal).storeAddress(owner).storeAddress(minter).endCell();
@@ -33,7 +32,10 @@ class Faucet implements Contract {
   }
   async getData(provider: ContractProvider) {
     const s = (await provider.get('get_faucet_data', [])).stack;
-    return { admin: s.readAddress(), usdt: s.readAddressOpt(), usdc: s.readAddressOpt(), drip: s.readBigNumber(), mintValue: s.readBigNumber() };
+    return { admin: s.readAddress(), usdt: s.readAddressOpt(), usdc: s.readAddressOpt(), drip: s.readBigNumber(), mintValue: s.readBigNumber(), cooldown: s.readBigNumber() };
+  }
+  async getLastClaim(provider: ContractProvider, owner: Address): Promise<bigint> {
+    return (await provider.get('get_last_claim', [{ type: 'slice', cell: beginCell().storeAddress(owner).endCell() }])).stack.readBigNumber();
   }
 }
 
@@ -53,13 +55,14 @@ describe('mock faucet', () => {
   let admin: SandboxContract<TreasuryContract>;
   let stranger: SandboxContract<TreasuryContract>;
   let user: SandboxContract<TreasuryContract>;
+  let user2: SandboxContract<TreasuryContract>;
   const content = beginCell().storeUint(0x01, 8).endCell();
 
-  beforeAll(async () => {
+  beforeAll(() => {
     walletCode = loadCode('wallet');
     minterCode = loadCode('minter');
     faucetCode = loadCode('faucet');
-  }, 30000);
+  });
 
   let faucet: SandboxContract<Faucet>;
   let usdtMinter: Address;
@@ -67,27 +70,25 @@ describe('mock faucet', () => {
 
   async function deployStack(configure: boolean) {
     bc = await Blockchain.create();
+    bc.now = T0;
     admin = await bc.treasury('admin');
     stranger = await bc.treasury('stranger');
     user = await bc.treasury('user');
+    user2 = await bc.treasury('user2');
 
     const fData = beginCell()
-      .storeAddress(admin.address).storeAddress(null).storeAddress(null).storeCoins(DRIP).storeCoins(MINT_VALUE)
+      .storeAddress(admin.address).storeAddress(null).storeAddress(null)
+      .storeCoins(DRIP).storeCoins(MINT_VALUE).storeUint(COOLDOWN, 32).storeBit(false) // empty claims map
       .endCell();
     const fInit = { code: faucetCode, data: fData };
     faucet = bc.openContract(new Faucet(contractAddress(0, fInit), fInit));
-    await faucet.sendDeploy(admin.getSender(), 5_000_000_000n); // fund the faucet
+    await faucet.sendDeploy(admin.getSender(), 5_000_000_000n);
 
-    const mkMinter = (c: Cell) => {
-      const data = beginCell().storeCoins(0).storeAddress(faucet.address).storeRef(c).storeRef(walletCode).endCell();
-      return contractAddress(0, { code: minterCode, data });
-    };
     const usdtData = beginCell().storeCoins(0).storeAddress(faucet.address).storeRef(content).storeRef(walletCode).endCell();
     const usdcData = beginCell().storeCoins(0).storeAddress(faucet.address).storeRef(beginCell().storeUint(0x02, 8).endCell()).storeRef(walletCode).endCell();
-    const usdtC = bc.openContract(new (class implements Contract { address = contractAddress(0, { code: minterCode, data: usdtData }); init = { code: minterCode, data: usdtData };
+    const mk = (data: Cell) => bc.openContract(new (class implements Contract { address = contractAddress(0, { code: minterCode, data }); init = { code: minterCode, data };
       async sendDeploy(p: ContractProvider, via: Sender) { await p.internal(via, { value: 100_000_000n, body: beginCell().endCell() }); } })());
-    const usdcC = bc.openContract(new (class implements Contract { address = contractAddress(0, { code: minterCode, data: usdcData }); init = { code: minterCode, data: usdcData };
-      async sendDeploy(p: ContractProvider, via: Sender) { await p.internal(via, { value: 100_000_000n, body: beginCell().endCell() }); } })());
+    const usdtC = mk(usdtData), usdcC = mk(usdcData);
     await (usdtC as any).sendDeploy(admin.getSender());
     await (usdcC as any).sendDeploy(admin.getSender());
     usdtMinter = usdtC.address;
@@ -96,16 +97,17 @@ describe('mock faucet', () => {
     if (configure) await faucet.sendConfigure(admin.getSender(), usdtMinter, usdcMinter);
   }
 
-  const userWallet = (minter: Address) =>
-    bc.openContract(new Reader(contractAddress(0, { code: walletCode, data: walletData(0n, user.address, minter) })));
+  const userWallet = (who: Address, minter: Address) =>
+    bc.openContract(new Reader(contractAddress(0, { code: walletCode, data: walletData(0n, who, minter) })));
   const minterReader = (m: Address) => bc.openContract(new Reader(m));
 
-  it('configure sets both minters (admin only)', async () => {
+  it('configure sets both minters and reports cooldown', async () => {
     await deployStack(false);
     await faucet.sendConfigure(admin.getSender(), usdtMinter, usdcMinter);
     const d = await faucet.getData();
     expect(d.usdt!.equals(usdtMinter)).toBe(true);
     expect(d.usdc!.equals(usdcMinter)).toBe(true);
+    expect(d.cooldown).toBe(BigInt(COOLDOWN));
   });
 
   it('configure from non-admin reverts (73)', async () => {
@@ -120,25 +122,48 @@ describe('mock faucet', () => {
     expect(res.transactions).toHaveTransaction({ to: faucet.address, success: false, exitCode: ERR_NOT_CONFIGURED });
   });
 
-  it('request drips both stables to the sender and raises supply', async () => {
+  it('request drips both stables and raises supply', async () => {
     await deployStack(true);
     await faucet.sendRequest(user.getSender());
-    expect(await userWallet(usdtMinter).getBalance()).toBe(DRIP);
-    expect(await userWallet(usdcMinter).getBalance()).toBe(DRIP);
+    expect(await userWallet(user.address, usdtMinter).getBalance()).toBe(DRIP);
+    expect(await userWallet(user.address, usdcMinter).getBalance()).toBe(DRIP);
     expect(await minterReader(usdtMinter).getSupply()).toBe(DRIP);
     expect(await minterReader(usdcMinter).getSupply()).toBe(DRIP);
+    expect(await faucet.getLastClaim(user.address)).toBe(BigInt(T0));
   });
 
-  it('repeated requests accumulate (unthrottled until step 4)', async () => {
+  it('a second request within the cooldown reverts (801)', async () => {
     await deployStack(true);
     await faucet.sendRequest(user.getSender());
+    const res = await faucet.sendRequest(user.getSender());
+    expect(res.transactions).toHaveTransaction({ to: faucet.address, success: false, exitCode: ERR_RATE_LIMITED });
+    expect(await userWallet(user.address, usdtMinter).getBalance()).toBe(DRIP); // not doubled
+  });
+
+  it('request succeeds again once the cooldown elapses', async () => {
+    await deployStack(true);
     await faucet.sendRequest(user.getSender());
-    expect(await userWallet(usdtMinter).getBalance()).toBe(DRIP * 2n);
+    bc.now = T0 + COOLDOWN;
+    await faucet.sendRequest(user.getSender());
+    expect(await userWallet(user.address, usdtMinter).getBalance()).toBe(DRIP * 2n);
+    expect(await faucet.getLastClaim(user.address)).toBe(BigInt(T0 + COOLDOWN));
+  });
+
+  it('cooldown is per-address: a different address can claim immediately', async () => {
+    await deployStack(true);
+    await faucet.sendRequest(user.getSender());
+    const res = await faucet.sendRequest(user2.getSender());
+    expect(res.transactions).not.toHaveTransaction({ to: faucet.address, success: false });
+    expect(await userWallet(user2.address, usdtMinter).getBalance()).toBe(DRIP);
+  });
+
+  it('get_last_claim is 0 for an address that never claimed', async () => {
+    await deployStack(true);
+    expect(await faucet.getLastClaim(user.address)).toBe(0n);
   });
 
   it('unknown opcode reverts', async () => {
     await deployStack(true);
-    const { internal } = await import('@ton/sandbox');
     const res = await bc.sendMessage(internal({
       from: admin.address, to: faucet.address, value: 50_000_000n,
       body: beginCell().storeUint(0xdeadbeef, 32).endCell(),
