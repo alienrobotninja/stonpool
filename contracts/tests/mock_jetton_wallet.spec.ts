@@ -1,7 +1,7 @@
 import { Blockchain, SandboxContract, TreasuryContract, internal } from '@ton/sandbox';
 import { Cell, beginCell, contractAddress, Contract, ContractProvider, Sender, Address } from '@ton/core';
-import { runTolkCompiler } from '@ton/tolk-js';
 import '@ton/test-utils';
+import { loadCode } from './helpers';
 import { randomAddress } from '@ton/test-utils';
 import { readFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
@@ -19,20 +19,6 @@ const ERR_INVALID_WALLET = 707;
 const ERR_INVALID_PAYLOAD = 708;
 const ERR_NOT_ENOUGH_TON = 709;
 
-const CONTRACTS_DIR = resolve(__dirname, '..', 'contracts');
-const STDLIB_DIR = join(dirname(require.resolve('@ton/tolk-js')), 'tolk-stdlib');
-
-async function compile(entry: string): Promise<Cell> {
-  const res = await runTolkCompiler({
-    entrypointFileName: entry,
-    fsReadCallback: (p) =>
-      p.startsWith('@stdlib/')
-        ? readFileSync(join(STDLIB_DIR, p.slice('@stdlib/'.length) + '.tolk'), 'utf-8')
-        : readFileSync(resolve(CONTRACTS_DIR, p), 'utf-8'),
-  });
-  if (res.status !== 'ok') throw new Error(res.message);
-  return Cell.fromBase64(res.codeBoc64);
-}
 
 function walletData(balance: bigint, owner: Address, minter: Address): Cell {
   return beginCell().storeCoins(balance).storeAddress(owner).storeAddress(minter).endCell();
@@ -85,7 +71,7 @@ describe('mock jetton wallet', () => {
   let stranger: SandboxContract<TreasuryContract>;
 
   beforeAll(async () => {
-    code = await compile('mock-jetton/jetton-wallet.tolk');
+    code = loadCode('wallet');
   }, 30000);
 
   beforeEach(async () => {

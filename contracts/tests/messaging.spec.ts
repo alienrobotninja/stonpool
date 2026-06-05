@@ -1,23 +1,13 @@
 import { Blockchain, SandboxContract, TreasuryContract } from '@ton/sandbox';
 import { Cell, beginCell, contractAddress, Contract, ContractProvider, Sender, Address } from '@ton/core';
-import { runTolkCompiler } from '@ton/tolk-js';
 import '@ton/test-utils';
+import { loadCode } from './helpers';
 import { randomAddress } from '@ton/test-utils';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
 const OP_JETTON_TRANSFER = 0x0f8a7ea5;
 const OP_EXCESSES = 0xd53276db;
-const CONTRACTS_DIR = resolve(__dirname, '..', 'contracts');
-
-async function compile(entry: string): Promise<Cell> {
-  const res = await runTolkCompiler({
-    entrypointFileName: entry,
-    fsReadCallback: (p) => readFileSync(resolve(CONTRACTS_DIR, p), 'utf-8'),
-  });
-  if (res.status !== 'ok') throw new Error(res.message);
-  return Cell.fromBase64(res.codeBoc64);
-}
 
 function expectedTransfer(dest: Address, resp: Address): Cell {
   return beginCell()
@@ -60,7 +50,7 @@ describe('messaging primitives', () => {
   let tester: SandboxContract<Tester>;
 
   beforeAll(async () => {
-    const code = await compile('messaging_tester.tolk');
+    const code = loadCode('messaging_tester');
     const init = { code, data: beginCell().endCell() };
     bc = await Blockchain.create();
     deployer = await bc.treasury('deployer');
