@@ -42,6 +42,9 @@ class Tester implements Contract {
   async getCell(provider: ContractProvider, name: string, stack: any[] = []): Promise<Cell> {
     return (await provider.get(name, stack as any)).stack.readCell();
   }
+  async getStack(provider: ContractProvider, name: string, stack: any[] = []) {
+    return (await provider.get(name, stack as any)).stack;
+  }
 }
 
 describe('messaging primitives', () => {
@@ -97,5 +100,20 @@ describe('messaging primitives', () => {
     const to = randomAddress();
     const res = await tester.sendExcessesTrigger(deployer.getSender(), to);
     expect(res.transactions).toHaveTransaction({ from: tester.address, to, op: OP_EXCESSES });
+  });
+
+  const cellArg = (c: Cell) => ({ type: 'cell' as const, cell: c });
+
+  it('JettonTransferNotification deserializes including the forward op', async () => {
+    const sender = randomAddress();
+    const cell = beginCell()
+      .storeUint(0x7362d09c, 32).storeUint(9, 64).storeCoins(500).storeAddress(sender)
+      .storeUint(0x10000031, 32)
+      .endCell();
+    const s = await tester.getStack('unpackTransferNotification', [cellArg(cell)]);
+    expect(s.readBigNumber()).toBe(9n);
+    expect(s.readBigNumber()).toBe(500n);
+    expect(s.readAddress().equals(sender)).toBe(true);
+    expect(s.readBigNumber()).toBe(0x10000031n);
   });
 });

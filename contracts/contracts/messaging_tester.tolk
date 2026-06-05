@@ -45,3 +45,11 @@ get fun packJettonTransferFull(destination: address, responseDestination: addres
     };
     return transfer.toCell();
 }
+
+get fun unpackTransferNotification(c: cell): (uint64, coins, address, uint32) {
+    val n = JettonTransferNotification.fromCell(c);
+    // expose the leading op of the forward payload too
+    var fp = n.forwardPayload;
+    val fwdOp = fp.remainingBitsCount() >= 32 ? fp.loadUint(32) : 0;
+    return (n.queryId, n.amount, n.sender, fwdOp as uint32);
+}

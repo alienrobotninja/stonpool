@@ -22,6 +22,16 @@ struct (0xd53276db) JettonExcesses {
     queryId: uint64
 }
 
+// Incoming TEP-74 transfer notification (received by a vault/adapter from its
+// jetton wallet). forwardPayload is the remainder; callers inspect its leading
+// op to route the deposit.
+struct (0x7362d09c) JettonTransferNotification {
+    queryId: uint64
+    amount: coins
+    sender: address
+    forwardPayload: RemainingBitsAndRefs
+}
+
 // Move jetton out of this contract's wallet. bounce on so a failed transfer
 // returns the value. tonValue must cover wallet gas plus forwardTonAmount.
 fun sendJettonTransfer(jettonWallet: address, tonValue: coins, mode: int, transfer: JettonTransfer): void {

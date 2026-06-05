@@ -13,6 +13,7 @@ const TARGETS = {
   shared_tester: 'shared_tester.tolk',
   iface_tester: 'iface_tester.tolk',
   messaging_tester: 'messaging_tester.tolk',
+  mock_adapter: 'yield_adapter_mock.tolk',
 };
 
 module.exports = async () => {
