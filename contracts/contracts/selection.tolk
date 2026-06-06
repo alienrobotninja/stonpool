@@ -1,0 +1,114 @@
+// C2 selection-ledger surface. LedgerEntry is the per-depositor value pool-core
+// keys by address; selection logic (weighted cumulative pick, eligibility) lands
+// in S2. The message structs describe the select request/result wire format.
+import "shared"
+
+// Balance-weighted ticket count + the epoch the entry was (re)established, used
+// for the min-hold eligibility gate.
+struct LedgerEntry {
+    weight: coins
+    joinEpoch: EpochId
+}
+
+// pool-core -> selection: pick winners for `tierCount` prize tiers from `seed`.
+struct (0x10000021) SelectWinners {
+    queryId: uint64
+    seed: uint256
+    tierCount: uint16
+}
+
+// selection -> pool-core / indexers: header for a completed selection.
+struct (0x10000022) WinnersResult {
+    queryId: uint64
+    epoch: EpochId
+    seed: uint256
+    tierCount: uint16
+}
+
+// --- C2 selection logic -----------------------------------------------------
+
+type Ledger = map<address, LedgerEntry>
+
+// Held long enough to be eligible for this draw.
+fun isEligible(entry: LedgerEntry, currentEpoch: EpochId, minHoldEpochs: uint16): bool {
+    return currentEpoch - entry.joinEpoch >= minHoldEpochs;
+}
+
+// Tickets an eligible entry contributes: its balance (weighted) or 1 (flat).
+fun entryTickets(entry: LedgerEntry, flat: bool): coins {
+    return flat ? 1 : entry.weight;
+}
+
+type Chosen = map<address, bool>
+
+// eligible weight, skipping any address already chosen in a prior tier.
+fun eligibleWeightEx(ledger: Ledger, currentEpoch: EpochId, minHoldEpochs: uint16, flat: bool, chosen: Chosen): coins {
+    var total: coins = 0;
+    var r = ledger.findFirst();
+    while (r.isFound) {
+        val e = r.loadValue();
+        if (isEligible(e, currentEpoch, minHoldEpochs) && !chosen.exists(r.getKey())) {
+            total += entryTickets(e, flat);
+        }
+        r = ledger.iterateNext(r);
+    }
+    return total;
+}
+
+fun eligibleWeight(ledger: Ledger, currentEpoch: EpochId, minHoldEpochs: uint16, flat: bool): coins {
+    return eligibleWeightEx(ledger, currentEpoch, minHoldEpochs, flat, createEmptyMap<address, bool>());
+}
+
+fun participantCount(ledger: Ledger): int {
+    var n = 0;
+    var r = ledger.findFirst();
+    while (r.isFound) {
+        n += 1;
+        r = ledger.iterateNext(r);
+    }
+    return n;
+}
+
+// addr's share of the eligible weight, in basis points (0 if absent or ineligible).
+fun oddsBps(ledger: Ledger, who: address, currentEpoch: EpochId, minHoldEpochs: uint16): int {
+    val found = ledger.get(who);
+    if (!found.isFound) { return 0; }
+    val e = found.loadValue();
+    if (!isEligible(e, currentEpoch, minHoldEpochs)) { return 0; }
+    val total = eligibleWeight(ledger, currentEpoch, minHoldEpochs, false);
+    if (total == 0) { return 0; }
+    return e.weight * 10000 / total;
+}
+
+// Deterministic winner for `word` over the not-yet-chosen eligible set:
+// target = word % remainingWeight, walk the cumulative weight until crossed.
+// Sampling without replacement across tiers => distinct winners. Same algorithm
+// a verifier reruns off-chain against the published seed.
+fun selectWinnerEx(ledger: Ledger, currentEpoch: EpochId, minHoldEpochs: uint16, flat: bool, word: uint256, chosen: Chosen): address {
+    val total = eligibleWeightEx(ledger, currentEpoch, minHoldEpochs, flat, chosen);
+    assert (total != 0) throw ERR_NO_DEPOSITORS;
+    val target = word % total;
+    var cumulative: coins = 0;
+    var r = ledger.findFirst();
+    while (r.isFound) {
+        val e = r.loadValue();
+        if (isEligible(e, currentEpoch, minHoldEpochs) && !chosen.exists(r.getKey())) {
+            cumulative += entryTickets(e, flat);
+            if (cumulative > target) {
+                return r.getKey();
+            }
+        }
+        r = ledger.iterateNext(r);
+    }
+    throw ERR_NO_DEPOSITORS; // unreachable: total > 0 guarantees a hit
+}
+
+fun selectWinner(ledger: Ledger, currentEpoch: EpochId, minHoldEpochs: uint16, flat: bool, word: uint256): address {
+    return selectWinnerEx(ledger, currentEpoch, minHoldEpochs, flat, word, createEmptyMap<address, bool>());
+}
+
+// Per-tier draw word from one seed: hash(seed || tier). A verifier reproduces
+// each tier's word off-chain, then reruns selectWinner against it.
+fun tierWord(seed: uint256, tier: int): uint256 {
+    return beginCell().storeUint(seed, 256).storeUint(tier, 32).endCell().hash();
+}
