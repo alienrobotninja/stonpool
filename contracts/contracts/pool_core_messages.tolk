@@ -7,3 +7,9 @@ struct (0x10000073) ConfigureCore {
     role: uint8
     addr: address
 }
+
+// depositor -> pool-core: withdraw `amount` of principal back to themselves.
+struct (0x10000002) RequestWithdraw {
+    queryId: uint64
+    amount: coins
+}

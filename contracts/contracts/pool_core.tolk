@@ -5,6 +5,7 @@ import "shared"
 import "messaging"
 import "selection"
 import "pool_core_messages"
+import "yield_adapter_iface"
 
 const ERR_NOT_CONFIGURED = 806
 
@@ -16,6 +17,7 @@ const ROLE_GOVERNOR = 4;
 
 const DEPOSIT_FWD_GAS = ton("0.1");
 const DEPOSIT_FWD_TON = ton("0.05");
+const WITHDRAW_GAS = ton("0.15");
 
 struct PoolStorage {
     currentEpoch: EpochId
@@ -42,7 +44,7 @@ fun minHoldOf(config: Cell<PoolConfig>): uint16 {
     return PoolConfig.fromCell(config).minHoldEpochs;
 }
 
-type AllowedMessage = JettonTransferNotification | ConfigureCore
+type AllowedMessage = JettonTransferNotification | RequestWithdraw | ConfigureCore
 
 fun onInternalMessage(in: InMessage) {
     if (in.body.isEmpty()) { return; } // deploy
@@ -87,6 +89,32 @@ fun onInternalMessage(in: InMessage) {
                 forwardPayload: tag,
             };
             sendJettonTransfer(jw, DEPOSIT_FWD_GAS, SEND_MODE_REGULAR, transfer);
+        }
+
+        RequestWithdraw => {
+            var s = lazy PoolStorage.load();
+            val who = in.senderAddress;
+            val found = s.ledger.get(who);
+            assert (found.isFound) throw ERR_NOTHING_TO_WITHDRAW;
+            val entry = found.loadValue();
+            assert (isEligible(entry, s.currentEpoch, minHoldOf(s.config))) throw ERR_WITHDRAW_TOO_EARLY;
+            assert (msg.amount != 0 && msg.amount <= entry.weight) throw ERR_NOTHING_TO_WITHDRAW;
+
+            val remaining = entry.weight - msg.amount;
+            if (remaining == 0) {
+                s.ledger.delete(who);
+            } else {
+                var e2 = entry;
+                e2.weight = remaining;
+                s.ledger.set(who, e2);
+            }
+            s.totalPrincipal -= msg.amount;
+            s.save();
+
+            // adapter returns the principal jettons to the depositor
+            val adapter = roleAddr(s.wiring, ROLE_ADAPTER);
+            val req: WithdrawPrincipal = { queryId: msg.queryId, amount: msg.amount, to: who };
+            createMessage({ bounce: BounceMode.NoBounce, dest: adapter, value: WITHDRAW_GAS, body: req }).send(SEND_MODE_REGULAR);
         }
 
         ConfigureCore => {
