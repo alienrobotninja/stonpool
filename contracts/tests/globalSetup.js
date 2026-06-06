@@ -19,6 +19,7 @@ const TARGETS = {
   draw_engine: 'draw_engine.tolk',
   param_governor: 'param_governor.tolk',
   jetton_vault: 'jetton_vault.tolk',
+  pool_core: 'pool_core.tolk',
 };
 
 module.exports = async () => {
