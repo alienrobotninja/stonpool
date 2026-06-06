@@ -48,3 +48,6 @@ get fun preview_winner_flat(word: uint256): address {
     val s = lazy TesterStorage.load();
     return selectWinner(s.ledger, s.currentEpoch, s.minHoldEpochs, true, word);
 }
+get fun tier_word(seed: uint256, tier: int): uint256 {
+    return tierWord(seed, tier);
+}

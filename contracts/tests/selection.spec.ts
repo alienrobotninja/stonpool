@@ -38,6 +38,9 @@ class Ledger implements Contract {
   async getWinnerFlat(p: ContractProvider, word: bigint): Promise<Address> {
     return (await p.get('preview_winner_flat', [intArg(word)])).stack.readAddress();
   }
+  async getTierWord(p: ContractProvider, seed: bigint, tier: number): Promise<bigint> {
+    return (await p.get('tier_word', [intArg(seed), intArg(BigInt(tier))])).stack.readBigNumber();
+  }
 }
 
 function ledgerData(epoch: number, minHold: number): Cell {
@@ -113,4 +116,16 @@ describe('C2 selection ledger', () => {
     await led.sendAddEntry(deployer.getSender(), only, 5n, EPOCH);
     await expect(led.getWinner(0n)).rejects.toThrow();
   });
+
+  it('tier_word = hash(seed || tier), reproducible off-chain and distinct per tier', async () => {
+    const led = await fresh();
+    const seed = 0xfeed1234n;
+    const h = (t: number) => BigInt('0x' + beginCell().storeUint(seed, 256).storeUint(t, 32).endCell().hash().toString('hex'));
+    const w0 = await led.getTierWord(seed, 0);
+    const w1 = await led.getTierWord(seed, 1);
+    expect(w0).toBe(h(0));
+    expect(w1).toBe(h(1));
+    expect(w0).not.toBe(w1);
+  });
+
 });

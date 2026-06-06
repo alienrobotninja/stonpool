@@ -7,6 +7,8 @@ import { loadCode } from './helpers';
 const OP_RUN_DRAW = 0x10000013;
 const OP_COMMIT = 0x10000011;
 const OP_REVEAL = 0x10000012;
+const OP_FINALIZE = 0x10000015;
+const OP_DRAW_RESULT = 0x10000014;
 const ERR_UNAUTHORIZED = 401;
 const ERR_NOT_COMMIT_WINDOW = 430;
 const ERR_INSUFFICIENT_BOND = 434;
@@ -15,6 +17,8 @@ const ERR_ALREADY_REVEALED = 436;
 const ERR_NOT_REVEAL_WINDOW = 431;
 const ERR_NO_COMMIT = 432;
 const ERR_BAD_REVEAL = 433;
+const ERR_EPOCH_NOT_ENDED = 420;
+const ERR_EPOCH_ALREADY_DRAWN = 421;
 
 const T0 = 1_000_000;
 const COMMIT_WINDOW = 300;
@@ -49,6 +53,19 @@ class Draw implements Contract {
       value,
       body: beginCell().storeUint(OP_REVEAL, 32).storeUint(0, 64).storeUint(secret, 256).endCell(),
     });
+  }
+  async sendFinalize(p: ContractProvider, via: Sender, value: bigint = 200_000_000n) {
+    await p.internal(via, {
+      value,
+      body: beginCell().storeUint(OP_FINALIZE, 32).storeUint(0, 64).endCell(),
+    });
+  }
+  async getPhase(p: ContractProvider): Promise<bigint> {
+    return (await p.get('get_phase', [])).stack.readBigNumber();
+  }
+  async getTallies(p: ContractProvider) {
+    const st = (await p.get('get_tallies', [])).stack;
+    return { total: st.readBigNumber(), revealed: st.readBigNumber() };
   }
   async getDrawState(p: ContractProvider) {
     const st = (await p.get('get_draw_state', [])).stack;
@@ -242,6 +259,84 @@ describe('C3 draw-engine commit phase', () => {
     await d.sendReveal(alice.getSender(), SA);
     const r = await d.sendReveal(alice.getSender(), SA);
     expect(r.transactions).toHaveTransaction({ to: d.address, success: false, exitCode: ERR_ALREADY_REVEALED });
+  });
+
+
+  // start + commit alice & bob; reveal the listed secrets, then jump past revealDeadline
+  async function readyToFinalize(reveal: { a?: boolean; b?: boolean }): Promise<SandboxContract<Draw>> {
+    const d = await committed();
+    bc.now = T0 + COMMIT_WINDOW; // reveal window
+    if (reveal.a) await d.sendReveal(alice.getSender(), SA);
+    if (reveal.b) await d.sendReveal(bob.getSender(), SB);
+    bc.now = T0 + COMMIT_WINDOW + REVEAL_WINDOW; // revealDeadline reached
+    return d;
+  }
+
+  it('finalize after full reveal emits DrawResult with the pure reveal-fold seed, nothing slashed', async () => {
+    const d = await readyToFinalize({ a: true, b: true });
+    const r = await d.sendFinalize(poolCore.getSender());
+    const expected = mixSeed(mixSeed(0n, SA), SB);
+    expect((await d.getDrawState()).finalized).toBe(true);
+    expect((await d.getDrawState()).seed).toBe(expected);
+    expect(await d.getPhase()).toBe(4n);
+    expect(r.transactions).toHaveTransaction({ from: d.address, to: poolCore.address, op: OP_DRAW_RESULT, value: 0n });
+  });
+
+  it('finalize slashes a no-show bond into the pot forwarded to poolCore', async () => {
+    const d = await readyToFinalize({ a: true, b: false }); // bob never reveals
+    const r = await d.sendFinalize(poolCore.getSender());
+    expect((await d.getDrawState()).seed).toBe(mixSeed(0n, SA)); // only alice's secret
+    expect(r.transactions).toHaveTransaction({ from: d.address, to: poolCore.address, op: OP_DRAW_RESULT, value: BOND });
+  });
+
+  it('fallback: zero reveals seeds from chain entropy and slashes every bond', async () => {
+    const d = await readyToFinalize({}); // nobody reveals
+    const r = await d.sendFinalize(poolCore.getSender());
+    expect((await d.getDrawState()).seed).not.toBe(0n); // entropy injected
+    expect((await d.getDrawState()).finalized).toBe(true);
+    expect(r.transactions).toHaveTransaction({ from: d.address, to: poolCore.address, op: OP_DRAW_RESULT, value: 2n * BOND });
+  });
+
+  it('rejects finalize before the reveal deadline', async () => {
+    const d = await committed();
+    bc.now = T0 + COMMIT_WINDOW; // reveal window still open
+    const r = await d.sendFinalize(poolCore.getSender());
+    expect(r.transactions).toHaveTransaction({ to: d.address, success: false, exitCode: ERR_EPOCH_NOT_ENDED });
+  });
+
+  it('only poolCore can finalize', async () => {
+    const d = await readyToFinalize({ a: true, b: true });
+    const r = await d.sendFinalize(stranger.getSender());
+    expect(r.transactions).toHaveTransaction({ to: d.address, success: false, exitCode: ERR_UNAUTHORIZED });
+  });
+
+  it('rejects a double finalize', async () => {
+    const d = await readyToFinalize({ a: true, b: true });
+    await d.sendFinalize(poolCore.getSender());
+    const r = await d.sendFinalize(poolCore.getSender());
+    expect(r.transactions).toHaveTransaction({ to: d.address, success: false, exitCode: ERR_EPOCH_ALREADY_DRAWN });
+  });
+
+  it('get_phase walks idle -> commit -> reveal -> awaiting -> finalized', async () => {
+    const d = await fresh();
+    expect(await d.getPhase()).toBe(0n);                 // idle
+    await d.sendStart(poolCore.getSender(), 7);
+    expect(await d.getPhase()).toBe(1n);                 // commit
+    bc.now = T0 + COMMIT_WINDOW;
+    expect(await d.getPhase()).toBe(2n);                 // reveal
+    bc.now = T0 + COMMIT_WINDOW + REVEAL_WINDOW;
+    expect(await d.getPhase()).toBe(3n);                 // awaiting finalize
+    await d.sendFinalize(poolCore.getSender());
+    expect(await d.getPhase()).toBe(4n);                 // finalized
+  });
+
+  it('get_tallies reports commit and reveal counts', async () => {
+    const d = await committed();
+    bc.now = T0 + COMMIT_WINDOW;
+    await d.sendReveal(alice.getSender(), SA);
+    const t = await d.getTallies();
+    expect(t.total).toBe(2n);
+    expect(t.revealed).toBe(1n);
   });
 
 });

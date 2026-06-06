@@ -30,7 +30,7 @@ struct DrawStorage {
 fun DrawStorage.load() { return DrawStorage.fromCell(contract.getData()) }
 fun DrawStorage.save(self) { contract.setData(self.toCell()) }
 
-type AllowedMessage = StartDraw | Commit | Reveal
+type AllowedMessage = StartDraw | Commit | Reveal | FinalizeDraw
 
 fun onInternalMessage(in: InMessage) {
     if (in.body.isEmpty()) { return; } // deploy
@@ -79,6 +79,40 @@ fun onInternalMessage(in: InMessage) {
             createMessage({ bounce: BounceMode.NoBounce, dest: in.senderAddress, value: cs.bond }).send(SEND_MODE_PAY_FEES_SEPARATELY);
         }
 
+        FinalizeDraw => {
+            var s = lazy DrawStorage.load();
+            assert (in.senderAddress == s.poolCore) throw ERR_UNAUTHORIZED;
+            assert (s.commitDeadline != 0) throw ERR_EPOCH_NOT_ENDED; // no draw open
+            assert (!s.finalized) throw ERR_EPOCH_ALREADY_DRAWN;
+            val nowTs = blockchain.now() as uint32;
+            assert (nowTs >= s.revealDeadline) throw ERR_EPOCH_NOT_ENDED; // reveal window still open
+
+            // tally reveals and the slashable pot (unrevealed commits forfeit their bond)
+            var revealCount = 0;
+            var slashed: coins = 0;
+            var r = s.commits.findFirst();
+            while (r.isFound) {
+                val cs = r.loadValue();
+                if (cs.revealed) { revealCount += 1; }
+                else { slashed += cs.bond; }
+                r = s.commits.iterateNext(r);
+            }
+
+            // safe fallback: if nobody revealed, seed from chain entropy so the draw never stalls
+            if (revealCount == 0) {
+                random.initialize();
+                s.seed = random.uint256();
+            }
+
+            s.finalized = true;
+            s.save();
+
+            // hand the result and the slashed pot to pool-core
+            val result: DrawResult = { epoch: s.epoch, seed: s.seed };
+            val out: DrawResultMsg = { queryId: msg.queryId, result: result };
+            createMessage({ bounce: BounceMode.NoBounce, dest: s.poolCore, value: slashed, body: out }).send(SEND_MODE_PAY_FEES_SEPARATELY);
+        }
+
         else => {
             assert (in.body.isEmpty()) throw ERR_UNKNOWN_OP
         }
@@ -96,4 +130,28 @@ get fun get_commit(who: address): (uint256, coins, bool) {
     if (!r.isFound) { return (0, 0, false); }
     val cs = r.loadValue();
     return (cs.commitHash, cs.bond, cs.revealed);
+}
+
+// 0 idle, 1 commit, 2 reveal, 3 awaiting finalize, 4 finalized
+get fun get_phase(): int {
+    val s = lazy DrawStorage.load();
+    if (s.finalized) { return 4; }
+    if (s.commitDeadline == 0) { return 0; }
+    val nowTs = blockchain.now();
+    if (nowTs < s.commitDeadline) { return 1; }
+    if (nowTs < s.revealDeadline) { return 2; }
+    return 3;
+}
+
+get fun get_tallies(): (int, int) {
+    val s = lazy DrawStorage.load();
+    var total = 0;
+    var revealed = 0;
+    var r = s.commits.findFirst();
+    while (r.isFound) {
+        total += 1;
+        if (r.loadValue().revealed) { revealed += 1; }
+        r = s.commits.iterateNext(r);
+    }
+    return (total, revealed);
 }

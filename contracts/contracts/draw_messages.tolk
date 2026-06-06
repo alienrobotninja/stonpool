@@ -26,3 +26,9 @@ struct (0x10000014) DrawResultMsg {
     queryId: uint64
     result: DrawResult
 }
+
+// pool-core -> draw-engine: close the draw after the reveal window; settles the
+// seed (chain-entropy fallback if nobody revealed) and forwards the slashed pot.
+struct (0x10000015) FinalizeDraw {
+    queryId: uint64
+}

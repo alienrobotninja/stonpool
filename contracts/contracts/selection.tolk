@@ -94,3 +94,9 @@ fun selectWinner(ledger: Ledger, currentEpoch: EpochId, minHoldEpochs: uint16, f
     }
     throw ERR_NO_DEPOSITORS; // unreachable: total > 0 guarantees a hit
 }
+
+// Per-tier draw word from one seed: hash(seed || tier). A verifier reproduces
+// each tier's word off-chain, then reruns selectWinner against it.
+fun tierWord(seed: uint256, tier: int): uint256 {
+    return beginCell().storeUint(seed, 256).storeUint(tier, 32).endCell().hash();
+}

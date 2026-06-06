@@ -6,6 +6,7 @@ import { loadCode } from './helpers';
 const OP_COMMIT = 0x10000011;
 const OP_REVEAL = 0x10000012;
 const OP_RUN_DRAW = 0x10000013;
+const OP_FINALIZE_DRAW = 0x10000015;
 const OP_DRAW_RESULT = 0x10000014;
 const OP_SELECT_WINNERS = 0x10000021;
 const OP_WINNERS_RESULT = 0x10000022;
@@ -72,6 +73,14 @@ describe('C2/C3 message + struct TL-B', () => {
     const st = await tester.getStack('unpackStartDraw', [cellArg(got)]);
     expect(st.readBigNumber()).toBe(1n);
     expect(st.readBigNumber()).toBe(7n);
+  });
+
+
+  it('FinalizeDraw round-trips', async () => {
+    const got = await tester.getCell('packFinalizeDraw');
+    expect(got).toEqualCell(beginCell().storeUint(OP_FINALIZE_DRAW, 32).storeUint(1, 64).endCell());
+    const st = await tester.getStack('unpackFinalizeDraw', [cellArg(got)]);
+    expect(st.readBigNumber()).toBe(1n);
   });
 
   it('Commit round-trips', async () => {
