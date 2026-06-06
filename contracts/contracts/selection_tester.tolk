@@ -51,3 +51,31 @@ get fun preview_winner_flat(word: uint256): address {
 get fun tier_word(seed: uint256, tier: int): uint256 {
     return tierWord(seed, tier);
 }
+
+// ledger keys in iteration order; lets a verifier reproduce the cumulative walk.
+get fun get_order(): array<address> {
+    val s = lazy TesterStorage.load();
+    var out: array<address> = [];
+    var r = s.ledger.findFirst();
+    while (r.isFound) {
+        out.push(r.getKey());
+        r = s.ledger.iterateNext(r);
+    }
+    return out;
+}
+
+// the full tiered draw: word_i = tierWord(seed, i), winner_i sampled without
+// replacement. This is exactly the loop pool-core runs on a DrawResult.
+get fun select_winners(seed: uint256, tierCount: int): array<address> {
+    val s = lazy TesterStorage.load();
+    var chosen = createEmptyMap<address, bool>();
+    var out: array<address> = [];
+    var tier = 0;
+    while (tier < tierCount) {
+        val w = selectWinnerEx(s.ledger, s.currentEpoch, s.minHoldEpochs, false, tierWord(seed, tier), chosen);
+        chosen.set(w, true);
+        out.push(w);
+        tier += 1;
+    }
+    return out;
+}

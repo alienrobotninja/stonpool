@@ -39,17 +39,24 @@ fun entryTickets(entry: LedgerEntry, flat: bool): coins {
     return flat ? 1 : entry.weight;
 }
 
-fun eligibleWeight(ledger: Ledger, currentEpoch: EpochId, minHoldEpochs: uint16, flat: bool): coins {
+type Chosen = map<address, bool>
+
+// eligible weight, skipping any address already chosen in a prior tier.
+fun eligibleWeightEx(ledger: Ledger, currentEpoch: EpochId, minHoldEpochs: uint16, flat: bool, chosen: Chosen): coins {
     var total: coins = 0;
     var r = ledger.findFirst();
     while (r.isFound) {
         val e = r.loadValue();
-        if (isEligible(e, currentEpoch, minHoldEpochs)) {
+        if (isEligible(e, currentEpoch, minHoldEpochs) && !chosen.exists(r.getKey())) {
             total += entryTickets(e, flat);
         }
         r = ledger.iterateNext(r);
     }
     return total;
+}
+
+fun eligibleWeight(ledger: Ledger, currentEpoch: EpochId, minHoldEpochs: uint16, flat: bool): coins {
+    return eligibleWeightEx(ledger, currentEpoch, minHoldEpochs, flat, createEmptyMap<address, bool>());
 }
 
 fun participantCount(ledger: Ledger): int {
@@ -73,18 +80,19 @@ fun oddsBps(ledger: Ledger, who: address, currentEpoch: EpochId, minHoldEpochs: 
     return e.weight * 10000 / total;
 }
 
-// Deterministic winner for `word`: target = word % totalEligible, walk the
-// cumulative weight until it is crossed. Same algorithm a verifier reruns
-// off-chain against the published seed.
-fun selectWinner(ledger: Ledger, currentEpoch: EpochId, minHoldEpochs: uint16, flat: bool, word: uint256): address {
-    val total = eligibleWeight(ledger, currentEpoch, minHoldEpochs, flat);
+// Deterministic winner for `word` over the not-yet-chosen eligible set:
+// target = word % remainingWeight, walk the cumulative weight until crossed.
+// Sampling without replacement across tiers => distinct winners. Same algorithm
+// a verifier reruns off-chain against the published seed.
+fun selectWinnerEx(ledger: Ledger, currentEpoch: EpochId, minHoldEpochs: uint16, flat: bool, word: uint256, chosen: Chosen): address {
+    val total = eligibleWeightEx(ledger, currentEpoch, minHoldEpochs, flat, chosen);
     assert (total != 0) throw ERR_NO_DEPOSITORS;
     val target = word % total;
     var cumulative: coins = 0;
     var r = ledger.findFirst();
     while (r.isFound) {
         val e = r.loadValue();
-        if (isEligible(e, currentEpoch, minHoldEpochs)) {
+        if (isEligible(e, currentEpoch, minHoldEpochs) && !chosen.exists(r.getKey())) {
             cumulative += entryTickets(e, flat);
             if (cumulative > target) {
                 return r.getKey();
@@ -93,6 +101,10 @@ fun selectWinner(ledger: Ledger, currentEpoch: EpochId, minHoldEpochs: uint16, f
         r = ledger.iterateNext(r);
     }
     throw ERR_NO_DEPOSITORS; // unreachable: total > 0 guarantees a hit
+}
+
+fun selectWinner(ledger: Ledger, currentEpoch: EpochId, minHoldEpochs: uint16, flat: bool, word: uint256): address {
+    return selectWinnerEx(ledger, currentEpoch, minHoldEpochs, flat, word, createEmptyMap<address, bool>());
 }
 
 // Per-tier draw word from one seed: hash(seed || tier). A verifier reproduces
