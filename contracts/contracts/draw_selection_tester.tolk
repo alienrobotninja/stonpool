@@ -20,6 +20,10 @@ get fun packWinnersResult(): cell {
     val m: WinnersResult = { queryId: 9, epoch: 7, seed: 0xABCDEF, tierCount: 3 };
     return m.toCell();
 }
+get fun packStartDraw(): cell {
+    val m: StartDraw = { queryId: 1, epoch: 7 };
+    return m.toCell();
+}
 get fun packCommit(): cell {
     val m: Commit = { queryId: 1, commitHash: 0x1111 };
     return m.toCell();
@@ -45,6 +49,10 @@ get fun unpackSelectWinners(c: cell): (uint64, uint256, uint16) {
 get fun unpackWinnersResult(c: cell): (uint64, uint32, uint256, uint16) {
     val v = WinnersResult.fromCell(c);
     return (v.queryId, v.epoch, v.seed, v.tierCount);
+}
+get fun unpackStartDraw(c: cell): (uint64, uint32) {
+    val v = StartDraw.fromCell(c);
+    return (v.queryId, v.epoch);
 }
 get fun unpackCommit(c: cell): (uint64, uint256) {
     val v = Commit.fromCell(c);

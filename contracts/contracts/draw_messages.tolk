@@ -2,6 +2,12 @@
 // value, not a struct field.
 import "shared"
 
+// pool-core -> draw-engine: open a new draw for `epoch` (sets commit/reveal windows).
+struct (0x10000013) StartDraw {
+    queryId: uint64
+    epoch: EpochId
+}
+
 // participant -> draw-engine: bonded commitment to hash(secret).
 struct (0x10000011) Commit {
     queryId: uint64
