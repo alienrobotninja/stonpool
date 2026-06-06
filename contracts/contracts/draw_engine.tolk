@@ -4,6 +4,7 @@ import "shared"
 import "draw_messages"
 
 const ERR_ALREADY_COMMITTED = 435
+const ERR_ALREADY_REVEALED = 436
 
 struct CommitState {
     commitHash: uint256
@@ -29,7 +30,7 @@ struct DrawStorage {
 fun DrawStorage.load() { return DrawStorage.fromCell(contract.getData()) }
 fun DrawStorage.save(self) { contract.setData(self.toCell()) }
 
-type AllowedMessage = StartDraw | Commit
+type AllowedMessage = StartDraw | Commit | Reveal
 
 fun onInternalMessage(in: InMessage) {
     if (in.body.isEmpty()) { return; } // deploy
@@ -58,6 +59,24 @@ fun onInternalMessage(in: InMessage) {
             val cs: CommitState = { commitHash: msg.commitHash, bond: in.valueCoins, revealed: false };
             s.commits.set(in.senderAddress, cs);
             s.save();
+        }
+
+        Reveal => {
+            var s = lazy DrawStorage.load();
+            val nowTs = blockchain.now() as uint32;
+            assert (s.commitDeadline != 0 && nowTs >= s.commitDeadline && nowTs < s.revealDeadline) throw ERR_NOT_REVEAL_WINDOW;
+            val found = s.commits.get(in.senderAddress);
+            assert (found.isFound) throw ERR_NO_COMMIT;
+            var cs = found.loadValue();
+            assert (!cs.revealed) throw ERR_ALREADY_REVEALED;
+            val computed = beginCell().storeUint(msg.secret, 256).endCell().hash();
+            assert (computed == cs.commitHash) throw ERR_BAD_REVEAL;
+            // fold the secret into the running seed; verifiable off-chain as hash(seed || secret)
+            s.seed = beginCell().storeUint(s.seed, 256).storeUint(msg.secret, 256).endCell().hash();
+            cs.revealed = true;
+            s.commits.set(in.senderAddress, cs);
+            s.save();
+            createMessage({ bounce: BounceMode.NoBounce, dest: in.senderAddress, value: cs.bond }).send(SEND_MODE_PAY_FEES_SEPARATELY);
         }
 
         else => {

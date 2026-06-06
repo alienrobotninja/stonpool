@@ -6,10 +6,15 @@ import { loadCode } from './helpers';
 
 const OP_RUN_DRAW = 0x10000013;
 const OP_COMMIT = 0x10000011;
+const OP_REVEAL = 0x10000012;
 const ERR_UNAUTHORIZED = 401;
 const ERR_NOT_COMMIT_WINDOW = 430;
 const ERR_INSUFFICIENT_BOND = 434;
 const ERR_ALREADY_COMMITTED = 435;
+const ERR_ALREADY_REVEALED = 436;
+const ERR_NOT_REVEAL_WINDOW = 431;
+const ERR_NO_COMMIT = 432;
+const ERR_BAD_REVEAL = 433;
 
 const T0 = 1_000_000;
 const COMMIT_WINDOW = 300;
@@ -17,6 +22,10 @@ const REVEAL_WINDOW = 300;
 const BOND = 1_000_000_000n; // 1 TON
 
 const addrArg = (a: Address) => ({ type: 'slice' as const, cell: beginCell().storeAddress(a).endCell() });
+
+const h256 = (c: Cell): bigint => BigInt('0x' + c.hash().toString('hex'));
+const commitHashOf = (secret: bigint) => h256(beginCell().storeUint(secret, 256).endCell());
+const mixSeed = (seed: bigint, secret: bigint) => h256(beginCell().storeUint(seed, 256).storeUint(secret, 256).endCell());
 
 class Draw implements Contract {
   constructor(readonly address: Address, readonly init: { code: Cell; data: Cell }) {}
@@ -33,6 +42,12 @@ class Draw implements Contract {
     await p.internal(via, {
       value,
       body: beginCell().storeUint(OP_COMMIT, 32).storeUint(0, 64).storeUint(commitHash, 256).endCell(),
+    });
+  }
+  async sendReveal(p: ContractProvider, via: Sender, secret: bigint, value: bigint = 100_000_000n) {
+    await p.internal(via, {
+      value,
+      body: beginCell().storeUint(OP_REVEAL, 32).storeUint(0, 64).storeUint(secret, 256).endCell(),
     });
   }
   async getDrawState(p: ContractProvider) {
@@ -158,4 +173,75 @@ describe('C3 draw-engine commit phase', () => {
     expect((await d.getCommit(alice.address)).bond).toBe(BOND);
     expect((await d.getCommit(bob.address)).bond).toBe(BOND + 5_000_000n);
   });
+
+  // commit alice (and optionally bob) inside the window with known secrets
+  const SA = 0x5ec5e741n;
+  const SB = 0xb0bb0b0bn;
+  async function committed(): Promise<SandboxContract<Draw>> {
+    const d = await started();
+    await d.sendCommit(alice.getSender(), commitHashOf(SA), BOND);
+    await d.sendCommit(bob.getSender(), commitHashOf(SB), BOND);
+    return d;
+  }
+
+  it('reveal in window verifies the hash, marks revealed, folds the seed', async () => {
+    const d = await committed();
+    bc.now = T0 + COMMIT_WINDOW; // enter reveal window
+    await d.sendReveal(alice.getSender(), SA);
+    const c = await d.getCommit(alice.address);
+    expect(c.revealed).toBe(true);
+    expect((await d.getDrawState()).seed).toBe(mixSeed(0n, SA));
+  });
+
+  it('seed mixing is order-dependent and reproducible off-chain', async () => {
+    const d = await committed();
+    bc.now = T0 + COMMIT_WINDOW;
+    await d.sendReveal(alice.getSender(), SA);
+    await d.sendReveal(bob.getSender(), SB);
+    expect((await d.getDrawState()).seed).toBe(mixSeed(mixSeed(0n, SA), SB));
+  });
+
+  it('reveal refunds the bond to the committer', async () => {
+    const d = await committed();
+    bc.now = T0 + COMMIT_WINDOW;
+    const r = await d.sendReveal(alice.getSender(), SA);
+    expect(r.transactions).toHaveTransaction({ from: d.address, to: alice.address, value: BOND });
+  });
+
+  it('rejects a reveal during the commit window (too early)', async () => {
+    const d = await committed(); // bc.now still T0 (commit window)
+    const r = await d.sendReveal(alice.getSender(), SA);
+    expect(r.transactions).toHaveTransaction({ to: d.address, success: false, exitCode: ERR_NOT_REVEAL_WINDOW });
+  });
+
+  it('rejects a reveal after the reveal deadline (too late)', async () => {
+    const d = await committed();
+    bc.now = T0 + COMMIT_WINDOW + REVEAL_WINDOW; // == revealDeadline, window is half-open
+    const r = await d.sendReveal(alice.getSender(), SA);
+    expect(r.transactions).toHaveTransaction({ to: d.address, success: false, exitCode: ERR_NOT_REVEAL_WINDOW });
+  });
+
+  it('rejects a reveal with no prior commit', async () => {
+    const d = await started();
+    bc.now = T0 + COMMIT_WINDOW;
+    const r = await d.sendReveal(stranger.getSender(), 0x1n);
+    expect(r.transactions).toHaveTransaction({ to: d.address, success: false, exitCode: ERR_NO_COMMIT });
+  });
+
+  it('rejects a secret that does not match the commit hash', async () => {
+    const d = await committed();
+    bc.now = T0 + COMMIT_WINDOW;
+    const r = await d.sendReveal(alice.getSender(), SA + 1n); // wrong secret
+    expect(r.transactions).toHaveTransaction({ to: d.address, success: false, exitCode: ERR_BAD_REVEAL });
+    expect((await d.getCommit(alice.address)).revealed).toBe(false);
+  });
+
+  it('rejects a double reveal', async () => {
+    const d = await committed();
+    bc.now = T0 + COMMIT_WINDOW;
+    await d.sendReveal(alice.getSender(), SA);
+    const r = await d.sendReveal(alice.getSender(), SA);
+    expect(r.transactions).toHaveTransaction({ to: d.address, success: false, exitCode: ERR_ALREADY_REVEALED });
+  });
+
 });
