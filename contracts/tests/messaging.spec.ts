@@ -1,22 +1,13 @@
 import { Blockchain, SandboxContract, TreasuryContract } from '@ton/sandbox';
 import { Cell, beginCell, contractAddress, Contract, ContractProvider, Sender, Address } from '@ton/core';
-import { runTolkCompiler } from '@ton/tolk-js';
 import '@ton/test-utils';
+import { loadCode } from './helpers';
 import { randomAddress } from '@ton/test-utils';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
 const OP_JETTON_TRANSFER = 0x0f8a7ea5;
-const CONTRACTS_DIR = resolve(__dirname, '..', 'contracts');
-
-async function compile(entry: string): Promise<Cell> {
-  const res = await runTolkCompiler({
-    entrypointFileName: entry,
-    fsReadCallback: (p) => readFileSync(resolve(CONTRACTS_DIR, p), 'utf-8'),
-  });
-  if (res.status !== 'ok') throw new Error(res.message);
-  return Cell.fromBase64(res.codeBoc64);
-}
+const OP_EXCESSES = 0xd53276db;
 
 function expectedTransfer(dest: Address, resp: Address): Cell {
   return beginCell()
@@ -42,8 +33,17 @@ class Tester implements Contract {
       body: beginCell().storeUint(0x1, 32).storeAddress(jw).storeAddress(dest).storeAddress(resp).endCell(),
     });
   }
+  async sendExcessesTrigger(provider: ContractProvider, via: Sender, to: Address) {
+    await provider.internal(via, {
+      value: 200_000_000n,
+      body: beginCell().storeUint(0x2, 32).storeAddress(to).endCell(),
+    });
+  }
   async getCell(provider: ContractProvider, name: string, stack: any[] = []): Promise<Cell> {
     return (await provider.get(name, stack as any)).stack.readCell();
+  }
+  async getStack(provider: ContractProvider, name: string, stack: any[] = []) {
+    return (await provider.get(name, stack as any)).stack;
   }
 }
 
@@ -53,7 +53,7 @@ describe('messaging primitives', () => {
   let tester: SandboxContract<Tester>;
 
   beforeAll(async () => {
-    const code = await compile('messaging_tester.tolk');
+    const code = loadCode('messaging_tester');
     const init = { code, data: beginCell().endCell() };
     bc = await Blockchain.create();
     deployer = await bc.treasury('deployer');
@@ -80,5 +80,40 @@ describe('messaging primitives', () => {
       to: jw,
       body: expectedTransfer(dest, resp),
     });
+  });
+
+  it('JettonTransfer packs present custom/forward payloads as refs', async () => {
+    const dest = deployer.address;
+    const resp = deployer.address;
+    const got = await tester.getCell('packJettonTransferFull', [addrSlice(dest), addrSlice(resp)]);
+    const exp = beginCell()
+      .storeUint(OP_JETTON_TRANSFER, 32).storeUint(1, 64).storeCoins(100)
+      .storeAddress(dest).storeAddress(resp)
+      .storeMaybeRef(beginCell().storeUint(0xab, 8).endCell())
+      .storeCoins(5)
+      .storeMaybeRef(beginCell().storeUint(0xcd, 8).endCell())
+      .endCell();
+    expect(got).toEqualCell(exp);
+  });
+
+  it('sendExcesses emits a JettonExcesses body to the target', async () => {
+    const to = randomAddress();
+    const res = await tester.sendExcessesTrigger(deployer.getSender(), to);
+    expect(res.transactions).toHaveTransaction({ from: tester.address, to, op: OP_EXCESSES });
+  });
+
+  const cellArg = (c: Cell) => ({ type: 'cell' as const, cell: c });
+
+  it('JettonTransferNotification deserializes including the forward op', async () => {
+    const sender = randomAddress();
+    const cell = beginCell()
+      .storeUint(0x7362d09c, 32).storeUint(9, 64).storeCoins(500).storeAddress(sender)
+      .storeUint(0x10000031, 32)
+      .endCell();
+    const s = await tester.getStack('unpackTransferNotification', [cellArg(cell)]);
+    expect(s.readBigNumber()).toBe(9n);
+    expect(s.readBigNumber()).toBe(500n);
+    expect(s.readAddress().equals(sender)).toBe(true);
+    expect(s.readBigNumber()).toBe(0x10000031n);
   });
 });

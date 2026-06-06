@@ -5,7 +5,7 @@
   "license": "MIT",
   "scripts": {
     "build": "blueprint build --all",
-    "test": "jest",
+    "test": "jest --runInBand",
     "fmt": "prettier --write \"wrappers/**/*.ts\" \"tests/**/*.ts\" \"scripts/**/*.ts\"",
     "fmt:check": "prettier --check \"wrappers/**/*.ts\" \"tests/**/*.ts\" \"scripts/**/*.ts\""
   },

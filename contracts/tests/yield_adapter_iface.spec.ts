@@ -1,7 +1,7 @@
 import { Blockchain, SandboxContract, TreasuryContract } from '@ton/sandbox';
 import { Cell, beginCell, contractAddress, Contract, ContractProvider, Sender, Address } from '@ton/core';
-import { runTolkCompiler } from '@ton/tolk-js';
 import '@ton/test-utils';
+import { loadCode } from './helpers';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
@@ -11,16 +11,6 @@ const OP_WITHDRAW_PRINCIPAL = 0x10000032;
 const OP_HARVEST_YIELD = 0x10000033;
 const OP_ADAPTER_REPORT = 0x10000034;
 
-const CONTRACTS_DIR = resolve(__dirname, '..', 'contracts');
-
-async function compile(entry: string): Promise<Cell> {
-  const res = await runTolkCompiler({
-    entrypointFileName: entry,
-    fsReadCallback: (p) => readFileSync(resolve(CONTRACTS_DIR, p), 'utf-8'),
-  });
-  if (res.status !== 'ok') throw new Error(res.message);
-  return Cell.fromBase64(res.codeBoc64);
-}
 
 class Tester implements Contract {
   constructor(readonly address: Address, readonly init: { code: Cell; data: Cell }) {}
@@ -42,7 +32,7 @@ describe('C5 yield-adapter-iface message layouts', () => {
   let tester: SandboxContract<Tester>;
 
   beforeAll(async () => {
-    const code = await compile('iface_tester.tolk');
+    const code = loadCode('iface_tester');
     const init = { code, data: beginCell().endCell() };
     bc = await Blockchain.create();
     deployer = await bc.treasury('deployer');
@@ -121,5 +111,10 @@ describe('C5 yield-adapter-iface message layouts', () => {
     expect(s.readBigNumber()).toBe(5n);
     expect(s.readBigNumber()).toBe(2n);
     expect(s.readBoolean()).toBe(true);
+  });
+
+  it('rejects a wrong opcode prefix on deserialize', async () => {
+    const bad = beginCell().storeUint(0xdeadbeef, 32).storeUint(42, 64).endCell();
+    await expect(tester.getStack('unpackDepositPrincipal', [cellArg(bad)])).rejects.toThrow();
   });
 });

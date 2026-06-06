@@ -1,26 +1,16 @@
-import { runTolkCompiler } from '@ton/tolk-js';
-import { readFileSync } from 'fs';
+import { existsSync, statSync } from 'fs';
 import { resolve } from 'path';
+import { BUILD_DIR } from './helpers';
 
-const CONTRACTS_DIR = resolve(__dirname, '..', 'contracts');
-
-// Each tester imports its production module(s), so compiling these entrypoints
-// is the smoke test for shared, yield_adapter_iface, and messaging.
-async function compile(entry: string) {
-  return runTolkCompiler({
-    entrypointFileName: entry,
-    fsReadCallback: (p) => readFileSync(resolve(CONTRACTS_DIR, p), 'utf-8'),
-  });
-}
-
-describe('Tolk compile smoke', () => {
-  it.each(['shared_tester.tolk', 'iface_tester.tolk', 'messaging_tester.tolk'])(
-    '%s compiles cleanly',
-    async (entry) => {
-      const res = await compile(entry);
-      if (res.status !== 'ok') throw new Error(`${entry}:\n${res.message}`);
-      expect(res.status).toBe('ok');
+// globalSetup compiles every entrypoint once and fails the run on any Tolk error,
+// so it is the compile gate. This just confirms each artifact was produced.
+describe('Tolk build artifacts', () => {
+  it.each(['wallet', 'minter', 'faucet', 'shared_tester', 'iface_tester', 'messaging_tester', 'mock_adapter'])(
+    '%s.boc.b64 exists and is non-empty',
+    (name) => {
+      const p = resolve(BUILD_DIR, `${name}.boc.b64`);
+      expect(existsSync(p)).toBe(true);
+      expect(statSync(p).size).toBeGreaterThan(0);
     },
-    30000,
   );
 });

@@ -1,7 +1,7 @@
 import { Blockchain, SandboxContract, TreasuryContract } from '@ton/sandbox';
 import { Cell, beginCell, contractAddress, Contract, ContractProvider, Sender, Address } from '@ton/core';
-import { runTolkCompiler } from '@ton/tolk-js';
 import '@ton/test-utils';
+import { loadCode } from './helpers';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
@@ -11,16 +11,6 @@ import { resolve } from 'path';
 const OP_HARVEST_YIELD = 0x10000033;
 const OP_DEPOSIT = 0x10000001;
 
-const CONTRACTS_DIR = resolve(__dirname, '..', 'contracts');
-
-async function compileTester(): Promise<Cell> {
-  const res = await runTolkCompiler({
-    entrypointFileName: 'shared_tester.tolk',
-    fsReadCallback: (p) => readFileSync(resolve(CONTRACTS_DIR, p), 'utf-8'),
-  });
-  if (res.status !== 'ok') throw new Error(res.message);
-  return Cell.fromBase64(res.codeBoc64);
-}
 
 class Tester implements Contract {
   constructor(
@@ -48,7 +38,7 @@ describe('C0 shared TL-B layouts', () => {
   let tester: SandboxContract<Tester>;
 
   beforeAll(async () => {
-    const code = await compileTester();
+    const code = loadCode('shared_tester');
     const init = { code, data: beginCell().endCell() };
     const address = contractAddress(0, init);
 
@@ -139,5 +129,10 @@ describe('C0 shared TL-B layouts', () => {
     const s = await tester.getStack('unpackDepositPayload', [cellArg(cell)]);
     expect(s.readBigNumber()).toBe(0x10000001n);
     expect(s.readAddress().equals(addr)).toBe(true);
+  });
+
+  it('rejects trailing data on strict decode', async () => {
+    const bad = beginCell().storeUint(7, 32).storeUint(123456789, 256).storeUint(0xff, 8).endCell();
+    await expect(tester.getStack('unpackDrawResult', [cellArg(bad)])).rejects.toThrow();
   });
 });
