@@ -14,6 +14,7 @@ const TARGETS = {
   iface_tester: 'iface_tester.tolk',
   messaging_tester: 'messaging_tester.tolk',
   mock_adapter: 'yield_adapter_mock.tolk',
+  draw_selection_tester: 'draw_selection_tester.tolk',
 };
 
 module.exports = async () => {
