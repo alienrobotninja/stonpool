@@ -3,7 +3,7 @@ import { Address, beginCell, Cell, Contract, ContractProvider, Sender, toNano } 
 export const DRIP = 1000n * 10n ** 6n; // 1000 tokens at 6 decimals
 export const MINT_VALUE = toNano('0.2');
 export const COOLDOWN = 3600;
-export const FAUCET_FUNDING = toNano('5');
+export const FAUCET_FUNDING = toNano('1'); // ~2 drips; refill by sending TON to the faucet
 
 const OP_CONFIGURE = 0x10000053;
 const OP_REQUEST = 0x10000052;
