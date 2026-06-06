@@ -40,6 +40,8 @@ fun onInternalMessage(in: InMessage) {
         StartDraw => {
             var s = lazy DrawStorage.load();
             assert (in.senderAddress == s.poolCore) throw ERR_UNAUTHORIZED;
+            assert (s.commitDeadline == 0 || s.finalized) throw ERR_BUSY; // don't clobber a live draw
+            assert (s.commitWindow != 0 && s.revealWindow != 0) throw ERR_INVALID_PARAMS;
             val nowTs = blockchain.now() as uint32;
             s.epoch = msg.epoch;
             s.commitDeadline = nowTs + s.commitWindow;
@@ -155,3 +157,4 @@ get fun get_tallies(): (int, int) {
     }
     return (total, revealed);
 }
+

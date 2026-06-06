@@ -19,6 +19,8 @@ const ERR_NO_COMMIT = 432;
 const ERR_BAD_REVEAL = 433;
 const ERR_EPOCH_NOT_ENDED = 420;
 const ERR_EPOCH_ALREADY_DRAWN = 421;
+const ERR_INVALID_PARAMS = 441;
+const ERR_BUSY = 451;
 
 const T0 = 1_000_000;
 const COMMIT_WINDOW = 300;
@@ -83,12 +85,12 @@ class Draw implements Contract {
   }
 }
 
-function drawData(poolCore: Address): Cell {
+function drawData(poolCore: Address, commitWindow = COMMIT_WINDOW, revealWindow = REVEAL_WINDOW): Cell {
   return beginCell()
     .storeAddress(poolCore)
     .storeUint(0, 32)            // epoch
-    .storeUint(COMMIT_WINDOW, 32)
-    .storeUint(REVEAL_WINDOW, 32)
+    .storeUint(commitWindow, 32)
+    .storeUint(revealWindow, 32)
     .storeCoins(BOND)
     .storeUint(0, 32)            // commitDeadline
     .storeUint(0, 32)            // revealDeadline
@@ -105,6 +107,7 @@ describe('C3 draw-engine commit phase', () => {
   let stranger: SandboxContract<TreasuryContract>;
   let alice: SandboxContract<TreasuryContract>;
   let bob: SandboxContract<TreasuryContract>;
+  let carol: SandboxContract<TreasuryContract>;
 
   beforeAll(() => { code = loadCode('draw_engine'); });
 
@@ -115,7 +118,18 @@ describe('C3 draw-engine commit phase', () => {
     stranger = await bc.treasury('stranger');
     alice = await bc.treasury('alice');
     bob = await bc.treasury('bob');
+    carol = await bc.treasury('carol');
     const init = { code, data: drawData(poolCore.address) };
+    const d = bc.openContract(new Draw(contractAddress(0, init), init));
+    await d.sendDeploy(poolCore.getSender());
+    return d;
+  }
+
+  async function freshWith(commitWindow: number, revealWindow: number): Promise<SandboxContract<Draw>> {
+    bc = await Blockchain.create();
+    bc.now = T0;
+    poolCore = await bc.treasury('poolCore');
+    const init = { code, data: drawData(poolCore.address, commitWindow, revealWindow) };
     const d = bc.openContract(new Draw(contractAddress(0, init), init));
     await d.sendDeploy(poolCore.getSender());
     return d;
@@ -337,6 +351,68 @@ describe('C3 draw-engine commit phase', () => {
     const t = await d.getTallies();
     expect(t.total).toBe(2n);
     expect(t.revealed).toBe(1n);
+  });
+
+
+  it('rejects StartDraw while a draw is live (mid-commit), leaving it intact', async () => {
+    const d = await started();
+    await d.sendCommit(alice.getSender(), 0xa1n, BOND);
+    const before = await d.getDrawState();
+    const r = await d.sendStart(poolCore.getSender(), 8);
+    expect(r.transactions).toHaveTransaction({ to: d.address, success: false, exitCode: ERR_BUSY });
+    expect((await d.getDrawState()).commitDeadline).toBe(before.commitDeadline); // unchanged
+    expect((await d.getCommit(alice.address)).bond).toBe(BOND);                  // commit not wiped
+  });
+
+  it('rejects StartDraw mid-reveal', async () => {
+    const d = await started();
+    await d.sendCommit(alice.getSender(), commitHashOf(SA), BOND);
+    bc.now = T0 + COMMIT_WINDOW;
+    const r = await d.sendStart(poolCore.getSender(), 8);
+    expect(r.transactions).toHaveTransaction({ to: d.address, success: false, exitCode: ERR_BUSY });
+  });
+
+  it('allows StartDraw again once the previous draw is finalized, clearing old state', async () => {
+    const d = await readyToFinalize({ a: true, b: true });
+    await d.sendFinalize(poolCore.getSender());
+    bc.now = T0 + COMMIT_WINDOW + REVEAL_WINDOW + 10;
+    const r = await d.sendStart(poolCore.getSender(), 8);
+    expect(r.transactions).toHaveTransaction({ to: d.address, success: true });
+    const st = await d.getDrawState();
+    expect(st.epoch).toBe(8n);
+    expect(st.finalized).toBe(false);
+    expect(st.seed).toBe(0n);
+    expect(await d.getPhase()).toBe(1n);                       // back to commit
+    expect((await d.getTallies()).total).toBe(0n);            // old commits cleared
+    expect((await d.getCommit(alice.address)).bond).toBe(0n);
+  });
+
+  it('rejects StartDraw when configured with a zero window', async () => {
+    const d = await freshWith(0, REVEAL_WINDOW);
+    const r = await d.sendStart(poolCore.getSender(), 7);
+    expect(r.transactions).toHaveTransaction({ to: d.address, success: false, exitCode: ERR_INVALID_PARAMS });
+  });
+
+  it('accounts every bond: revealers refunded, no-shows slashed to poolCore', async () => {
+    const d = await started();
+    await d.sendCommit(alice.getSender(), commitHashOf(SA), BOND);
+    await d.sendCommit(bob.getSender(), 0xb2n, BOND);     // bob no-show
+    await d.sendCommit(carol.getSender(), 0xc3n, BOND);   // carol no-show
+    bc.now = T0 + COMMIT_WINDOW;
+    const refund = await d.sendReveal(alice.getSender(), SA);
+    expect(refund.transactions).toHaveTransaction({ from: d.address, to: alice.address, value: BOND });
+    bc.now = T0 + COMMIT_WINDOW + REVEAL_WINDOW;
+    const fin = await d.sendFinalize(poolCore.getSender());
+    // 3 bonds in: 1 refunded + 2 slashed -> poolCore receives exactly 2*BOND
+    expect(fin.transactions).toHaveTransaction({ from: d.address, to: poolCore.address, op: OP_DRAW_RESULT, value: 2n * BOND });
+  });
+
+  it('a failed reveal (bad secret) refunds nothing (checks before effects)', async () => {
+    const d = await committed();
+    bc.now = T0 + COMMIT_WINDOW;
+    const r = await d.sendReveal(alice.getSender(), SA + 1n);
+    expect(r.transactions).not.toHaveTransaction({ from: d.address, to: alice.address, value: BOND });
+    expect((await d.getCommit(alice.address)).revealed).toBe(false);
   });
 
 });
