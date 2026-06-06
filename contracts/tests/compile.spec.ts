@@ -5,7 +5,7 @@ import { BUILD_DIR } from './helpers';
 // globalSetup compiles every entrypoint once and fails the run on any Tolk error,
 // so it is the compile gate. This just confirms each artifact was produced.
 describe('Tolk build artifacts', () => {
-  it.each(['wallet', 'minter', 'faucet', 'shared_tester', 'iface_tester', 'messaging_tester', 'mock_adapter', 'draw_selection_tester'])(
+  it.each(['wallet', 'minter', 'faucet', 'shared_tester', 'iface_tester', 'messaging_tester', 'mock_adapter', 'draw_selection_tester', 'selection_tester'])(
     '%s.boc.b64 exists and is non-empty',
     (name) => {
       const p = resolve(BUILD_DIR, `${name}.boc.b64`);
