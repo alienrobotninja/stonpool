@@ -17,6 +17,7 @@ const TARGETS = {
   draw_selection_tester: 'draw_selection_tester.tolk',
   selection_tester: 'selection_tester.tolk',
   draw_engine: 'draw_engine.tolk',
+  param_governor: 'param_governor.tolk',
 };
 
 module.exports = async () => {
