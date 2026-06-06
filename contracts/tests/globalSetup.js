@@ -18,6 +18,7 @@ const TARGETS = {
   selection_tester: 'selection_tester.tolk',
   draw_engine: 'draw_engine.tolk',
   param_governor: 'param_governor.tolk',
+  jetton_vault: 'jetton_vault.tolk',
 };
 
 module.exports = async () => {
