@@ -7,6 +7,7 @@ import "selection"
 import "pool_core_messages"
 import "yield_adapter_iface"
 import "draw_messages"
+import "vault_messages"
 
 const ERR_NOT_CONFIGURED = 806
 
@@ -21,6 +22,7 @@ const DEPOSIT_FWD_TON = ton("0.05");
 const WITHDRAW_GAS = ton("0.15");
 const HARVEST_GAS = ton("0.15");
 const START_DRAW_GAS = ton("0.05");
+const PAYOUT_GAS = ton("0.1");
 
 struct PoolStorage {
     currentEpoch: EpochId
@@ -47,7 +49,7 @@ fun minHoldOf(config: Cell<PoolConfig>): uint16 {
     return PoolConfig.fromCell(config).minHoldEpochs;
 }
 
-type AllowedMessage = JettonTransferNotification | RequestWithdraw | AdvanceEpoch | ConfigureCore
+type AllowedMessage = JettonTransferNotification | RequestWithdraw | AdvanceEpoch | AdapterReportMsg | DrawResultMsg | ConfigureCore
 
 fun onInternalMessage(in: InMessage) {
     if (in.body.isEmpty()) { return; } // deploy
@@ -139,6 +141,54 @@ fun onInternalMessage(in: InMessage) {
 
             val start: StartDraw = { queryId: 0, epoch: endedEpoch };
             createMessage({ bounce: BounceMode.NoBounce, dest: roleAddr(s.wiring, ROLE_DRAW_ENGINE), value: START_DRAW_GAS, body: start }).send(SEND_MODE_REGULAR);
+        }
+
+        AdapterReportMsg => {
+            var s = lazy PoolStorage.load();
+            assert (in.senderAddress == roleAddr(s.wiring, ROLE_ADAPTER)) throw ERR_UNAUTHORIZED;
+            // harvested yield funds the prize pot; other reports just confirm ledger moves
+            if (msg.report.reportedOp == OP_HARVEST_YIELD && msg.report.success) {
+                s.prizePot += msg.report.yieldAmount;
+                s.save();
+            }
+        }
+
+        DrawResultMsg => {
+            var s = lazy PoolStorage.load();
+            assert (in.senderAddress == roleAddr(s.wiring, ROLE_DRAW_ENGINE)) throw ERR_UNAUTHORIZED;
+            val cfg = PoolConfig.fromCell(s.config);
+            val vault = roleAddr(s.wiring, ROLE_VAULT);
+
+            val eligible = eligibleCount(s.ledger, s.currentEpoch, cfg.minHoldEpochs);
+            if (eligible == 0) { return; } // no eligible depositors: pot rolls over
+
+            val pot = s.prizePot;
+            val skim = pot * cfg.skimBps / 10000;
+            val distributable = pot - skim;
+            var tiers = cfg.prizeTiers as int;
+            if (tiers > eligible) { tiers = eligible; }
+            val perTier = distributable / tiers;
+            val remainder = distributable - perTier * tiers;
+
+            s.prizePot = 0; // effects before interactions; ledger stays intact in memory for selection
+            s.save();
+
+            if (skim != 0) {
+                val skimPay: Payout = { queryId: 0, to: s.admin, amount: skim };
+                createMessage({ bounce: BounceMode.NoBounce, dest: vault, value: PAYOUT_GAS, body: skimPay }).send(SEND_MODE_REGULAR);
+            }
+
+            var chosen = createEmptyMap<address, bool>();
+            var tier = 0;
+            while (tier < tiers) {
+                val winner = selectWinnerEx(s.ledger, s.currentEpoch, cfg.minHoldEpochs, false, tierWord(msg.result.seed, tier), chosen);
+                chosen.set(winner, true);
+                var amount = perTier;
+                if (tier == 0) { amount += remainder; }
+                val pay: Payout = { queryId: 0, to: winner, amount: amount };
+                createMessage({ bounce: BounceMode.NoBounce, dest: vault, value: PAYOUT_GAS, body: pay }).send(SEND_MODE_REGULAR);
+                tier += 1;
+            }
         }
 
         ConfigureCore => {

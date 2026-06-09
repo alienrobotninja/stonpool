@@ -36,6 +36,10 @@ get fun get_total_weight(): coins {
     val s = lazy TesterStorage.load();
     return eligibleWeight(s.ledger, s.currentEpoch, s.minHoldEpochs, false);
 }
+get fun get_eligible_count(): int {
+    val s = lazy TesterStorage.load();
+    return eligibleCount(s.ledger, s.currentEpoch, s.minHoldEpochs);
+}
 get fun get_odds(who: address): int {
     val s = lazy TesterStorage.load();
     return oddsBps(s.ledger, who, s.currentEpoch, s.minHoldEpochs);
