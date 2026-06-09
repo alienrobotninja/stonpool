@@ -6,6 +6,7 @@ import "messaging"
 import "selection"
 import "pool_core_messages"
 import "yield_adapter_iface"
+import "draw_messages"
 
 const ERR_NOT_CONFIGURED = 806
 
@@ -18,6 +19,8 @@ const ROLE_GOVERNOR = 4;
 const DEPOSIT_FWD_GAS = ton("0.1");
 const DEPOSIT_FWD_TON = ton("0.05");
 const WITHDRAW_GAS = ton("0.15");
+const HARVEST_GAS = ton("0.15");
+const START_DRAW_GAS = ton("0.05");
 
 struct PoolStorage {
     currentEpoch: EpochId
@@ -44,7 +47,7 @@ fun minHoldOf(config: Cell<PoolConfig>): uint16 {
     return PoolConfig.fromCell(config).minHoldEpochs;
 }
 
-type AllowedMessage = JettonTransferNotification | RequestWithdraw | ConfigureCore
+type AllowedMessage = JettonTransferNotification | RequestWithdraw | AdvanceEpoch | ConfigureCore
 
 fun onInternalMessage(in: InMessage) {
     if (in.body.isEmpty()) { return; } // deploy
@@ -115,6 +118,27 @@ fun onInternalMessage(in: InMessage) {
             val adapter = roleAddr(s.wiring, ROLE_ADAPTER);
             val req: WithdrawPrincipal = { queryId: msg.queryId, amount: msg.amount, to: who };
             createMessage({ bounce: BounceMode.NoBounce, dest: adapter, value: WITHDRAW_GAS, body: req }).send(SEND_MODE_REGULAR);
+        }
+
+        AdvanceEpoch => {
+            var s = lazy PoolStorage.load();
+            assert (in.senderAddress == s.admin) throw ERR_UNAUTHORIZED;
+            val cfg = PoolConfig.fromCell(s.config);
+            val nowTs = blockchain.now() as uint32;
+            assert (nowTs >= s.epochStart + cfg.epochLength) throw ERR_EPOCH_NOT_ENDED;
+
+            val endedEpoch = s.currentEpoch;
+            s.currentEpoch += 1;
+            s.epochStart = nowTs;
+            s.depositDeadline = nowTs + cfg.epochLength - cfg.depositCutoff;
+            s.save();
+
+            // harvest the ended epoch's yield into the prize pot, then open the draw for it
+            val harvest: HarvestYield = { queryId: 0, to: roleAddr(s.wiring, ROLE_VAULT) };
+            createMessage({ bounce: BounceMode.NoBounce, dest: roleAddr(s.wiring, ROLE_ADAPTER), value: HARVEST_GAS, body: harvest }).send(SEND_MODE_REGULAR);
+
+            val start: StartDraw = { queryId: 0, epoch: endedEpoch };
+            createMessage({ bounce: BounceMode.NoBounce, dest: roleAddr(s.wiring, ROLE_DRAW_ENGINE), value: START_DRAW_GAS, body: start }).send(SEND_MODE_REGULAR);
         }
 
         ConfigureCore => {

@@ -13,3 +13,8 @@ struct (0x10000002) RequestWithdraw {
     queryId: uint64
     amount: coins
 }
+
+// admin/scheduler -> pool-core: close the epoch, harvest yield, open the draw.
+struct (0x10000004) AdvanceEpoch {
+    queryId: uint64
+}
