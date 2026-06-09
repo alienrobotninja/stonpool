@@ -8,6 +8,7 @@ import "pool_core_messages"
 import "yield_adapter_iface"
 import "draw_messages"
 import "vault_messages"
+import "governor_messages"
 
 const ERR_NOT_CONFIGURED = 806
 
@@ -49,7 +50,7 @@ fun minHoldOf(config: Cell<PoolConfig>): uint16 {
     return PoolConfig.fromCell(config).minHoldEpochs;
 }
 
-type AllowedMessage = JettonTransferNotification | RequestWithdraw | AdvanceEpoch | AdapterReportMsg | DrawResultMsg | ConfigureCore
+type AllowedMessage = JettonTransferNotification | RequestWithdraw | AdvanceEpoch | AdapterReportMsg | DrawResultMsg | ParamsUpdated | ConfigureCore
 
 fun onInternalMessage(in: InMessage) {
     if (in.body.isEmpty()) { return; } // deploy
@@ -191,6 +192,13 @@ fun onInternalMessage(in: InMessage) {
             }
         }
 
+        ParamsUpdated => {
+            var s = lazy PoolStorage.load();
+            assert (in.senderAddress == roleAddr(s.wiring, ROLE_GOVERNOR)) throw ERR_UNAUTHORIZED;
+            s.config = msg.config.toCell();
+            s.save();
+        }
+
         ConfigureCore => {
             var s = lazy PoolStorage.load();
             assert (in.senderAddress == s.admin) throw ERR_UNAUTHORIZED;
@@ -204,6 +212,10 @@ fun onInternalMessage(in: InMessage) {
     }
 }
 
+get fun get_config(): cell {
+    val s = lazy PoolStorage.load();
+    return s.config;
+}
 get fun get_pool_data(): (EpochId, uint32, coins, coins) {
     val s = lazy PoolStorage.load();
     return (s.currentEpoch, s.depositDeadline, s.totalPrincipal, s.prizePot);
