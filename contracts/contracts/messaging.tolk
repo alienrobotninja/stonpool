@@ -52,3 +52,26 @@ fun sendExcesses(to: address, queryId: uint64, mode: int): void {
         body: JettonExcesses { queryId },
     }).send(mode);
 }
+
+// TEP-74 transfer carrying an inline 32-bit op as the forward payload (raw
+// remainder, not Maybe^Cell). The mock wallet forwards the remainder verbatim
+// into its transfer_notification, so the recipient reads the tag from the
+// leading 32 bits. forwardTonAmount must be > 0 or no notification is emitted.
+struct (0x0f8a7ea5) JettonTransferTagged {
+    queryId: uint64
+    amount: coins
+    destination: address
+    responseDestination: address
+    customPayload: cell?
+    forwardTonAmount: coins
+    forwardOp: uint32
+}
+
+fun sendJettonTransferTagged(jettonWallet: address, tonValue: coins, mode: int, transfer: JettonTransferTagged): void {
+    createMessage({
+        bounce: BounceMode.Only256BitsOfBody,
+        value: tonValue,
+        dest: jettonWallet,
+        body: transfer,
+    }).send(mode);
+}

@@ -18,3 +18,8 @@ struct (0x10000002) RequestWithdraw {
 struct (0x10000004) AdvanceEpoch {
     queryId: uint64
 }
+
+// scheduler -> pool-core: trigger the draw-engine to finalize (it is pool-core-gated).
+struct (0x10000016) SettleDraw {
+    queryId: uint64
+}

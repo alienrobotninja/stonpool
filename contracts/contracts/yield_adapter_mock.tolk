@@ -8,6 +8,7 @@ import "yield_adapter_iface"
 
 const ADAPTER_REPORT_GAS = ton("0.02")
 const ADAPTER_TRANSFER_GAS = ton("0.05")
+const HARVEST_NOTIFY_TON = ton("0.05")
 const ERR_NOT_CONFIGURED = 802
 const ERR_INSUFFICIENT_PRINCIPAL = 803
 
@@ -52,17 +53,17 @@ fun reportTo(poolCore: address, queryId: uint64, reportedOp: uint32, principal: 
     createMessage({ bounce: BounceMode.NoBounce, dest: poolCore, value: ADAPTER_REPORT_GAS, body: msg }).send(SEND_MODE_REGULAR);
 }
 
-fun sendStable(jettonWallet: address, to: address, amount: coins, responseDest: address) {
+fun sendStable(jettonWallet: address, to: address, amount: coins, responseDest: address, forwardTon: coins) {
     val transfer: JettonTransfer = {
         queryId: 0,
         amount: amount,
         destination: to,
         responseDestination: responseDest,
         customPayload: null,
-        forwardTonAmount: 0,
+        forwardTonAmount: forwardTon,
         forwardPayload: null,
     };
-    sendJettonTransfer(jettonWallet, ADAPTER_TRANSFER_GAS, SEND_MODE_REGULAR, transfer);
+    sendJettonTransfer(jettonWallet, ADAPTER_TRANSFER_GAS + forwardTon, SEND_MODE_REGULAR, transfer);
 }
 
 fun onInternalMessage(in: InMessage) {
@@ -91,7 +92,7 @@ fun onInternalMessage(in: InMessage) {
 
             storage.principal -= msg.amount;
             storage.save();
-            sendStable(storage.jettonWallet!, msg.to, msg.amount, storage.poolCore!);
+            sendStable(storage.jettonWallet!, msg.to, msg.amount, storage.poolCore!, 0);
             reportTo(storage.poolCore!, msg.queryId, OP_WITHDRAW_PRINCIPAL, storage.principal, 0);
         }
 
@@ -101,7 +102,7 @@ fun onInternalMessage(in: InMessage) {
             assert (in.senderAddress == storage.poolCore!) throw ERR_UNAUTHORIZED;
 
             val amount = pendingYield(storage.principal, storage.yieldBps);
-            sendStable(storage.jettonWallet!, msg.to, amount, storage.poolCore!);
+            sendStable(storage.jettonWallet!, msg.to, amount, storage.poolCore!, HARVEST_NOTIFY_TON);
             reportTo(storage.poolCore!, msg.queryId, OP_HARVEST_YIELD, storage.principal, amount);
         }
 

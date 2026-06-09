@@ -24,6 +24,7 @@ const WITHDRAW_GAS = ton("0.15");
 const HARVEST_GAS = ton("0.15");
 const START_DRAW_GAS = ton("0.05");
 const PAYOUT_GAS = ton("0.1");
+const SETTLE_GAS = ton("0.2");
 
 struct PoolStorage {
     currentEpoch: EpochId
@@ -50,7 +51,7 @@ fun minHoldOf(config: Cell<PoolConfig>): uint16 {
     return PoolConfig.fromCell(config).minHoldEpochs;
 }
 
-type AllowedMessage = JettonTransferNotification | RequestWithdraw | AdvanceEpoch | AdapterReportMsg | DrawResultMsg | ParamsUpdated | ConfigureCore
+type AllowedMessage = JettonTransferNotification | RequestWithdraw | AdvanceEpoch | SettleDraw | AdapterReportMsg | DrawResultMsg | ParamsUpdated | ConfigureCore
 
 fun onInternalMessage(in: InMessage) {
     if (in.body.isEmpty()) { return; } // deploy
@@ -82,19 +83,18 @@ fun onInternalMessage(in: InMessage) {
             s.totalPrincipal += msg.amount;
             s.save();
 
-            // forward principal to the adapter, tagged so it credits principal (earns yield)
-            val adapter = roleAddr(s.wiring, ROLE_ADAPTER);
-            val tag = beginCell().storeUint(OP_DEPOSIT_PRINCIPAL, 32).endCell();
-            val transfer: JettonTransfer = {
+            // forward principal to the adapter; the inline tag tells it to credit
+            // principal (vs. hold as reserve). forwardTon > 0 so the adapter is notified.
+            val transfer: JettonTransferTagged = {
                 queryId: 0,
                 amount: msg.amount,
-                destination: adapter,
+                destination: roleAddr(s.wiring, ROLE_ADAPTER),
                 responseDestination: s.admin,
                 customPayload: null,
                 forwardTonAmount: DEPOSIT_FWD_TON,
-                forwardPayload: tag,
+                forwardOp: OP_DEPOSIT_PRINCIPAL,
             };
-            sendJettonTransfer(jw, DEPOSIT_FWD_GAS, SEND_MODE_REGULAR, transfer);
+            sendJettonTransferTagged(jw, DEPOSIT_FWD_GAS, SEND_MODE_REGULAR, transfer);
         }
 
         RequestWithdraw => {
@@ -190,6 +190,13 @@ fun onInternalMessage(in: InMessage) {
                 createMessage({ bounce: BounceMode.NoBounce, dest: vault, value: PAYOUT_GAS, body: pay }).send(SEND_MODE_REGULAR);
                 tier += 1;
             }
+        }
+
+        SettleDraw => {
+            var s = lazy PoolStorage.load();
+            assert (in.senderAddress == s.admin) throw ERR_UNAUTHORIZED;
+            val fin: FinalizeDraw = { queryId: 0 };
+            createMessage({ bounce: BounceMode.NoBounce, dest: roleAddr(s.wiring, ROLE_DRAW_ENGINE), value: SETTLE_GAS, body: fin }).send(SEND_MODE_REGULAR);
         }
 
         ParamsUpdated => {
