@@ -20,6 +20,8 @@ const TARGETS = {
   param_governor: 'param_governor.tolk',
   jetton_vault: 'jetton_vault.tolk',
   pool_core: 'pool_core.tolk',
+  mock_stonfi_router: 'mock_stonfi_router.tolk',
+  mock_stonfi_pool: 'mock_stonfi_pool.tolk',
 };
 
 module.exports = async () => {
