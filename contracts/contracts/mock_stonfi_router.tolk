@@ -1,11 +1,16 @@
 // Mock STON.fi router stub. Holds the pooled underlying in its own jetton wallet
 // (mirroring STON.fi, where the router owns the token vaults and pools only track
 // accounting). On a transfer_notification from that wallet carrying a provide_lp
-// forward payload, it forwards provide_lp to the pool. A notification without the
-// provide_lp tag is ignored (swaps and other DEX ops are out of scope for the stub).
+// forward payload it forwards provide_lp to the pool. On PayOut from the pool (the
+// pay_to leg of a burn) it releases underlying from the vault to the holder. A
+// notification without the provide_lp tag is ignored.
 import "shared"
 import "messaging"
+import "stonfi_protocol"
 import "mock_stonfi_messages"
+
+const PAYOUT_GAS = ton("0.05");
+const RELEASE_NOTIFY_TON = ton("0.05");
 
 @overflow1023_policy("suppress")
 struct RouterStorage {
@@ -27,7 +32,7 @@ struct (0x7e571001) ConfigureRouter {
     pool: address
 }
 
-type AllowedMessageToRouter = JettonTransferNotification | ConfigureRouter
+type AllowedMessageToRouter = JettonTransferNotification | PayOut | ConfigureRouter
 
 fun onInternalMessage(in: InMessage) {
     val msg = lazy AllowedMessageToRouter.fromSlice(in.body);
@@ -56,6 +61,23 @@ fun onInternalMessage(in: InMessage) {
                 }).send(SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
             }
             // untagged notification: nothing to do, jettons stay in the router vault
+        }
+
+        PayOut => {
+            var storage = lazy RouterStorage.load();
+            assert ((storage.jettonWallet != null) & (storage.pool != null)) throw ERR_STONFI_NOT_CONFIGURED;
+            assert (in.senderAddress == storage.pool!) throw ERR_UNAUTHORIZED;
+
+            val transfer: JettonTransfer = {
+                queryId: msg.queryId,
+                amount: msg.amount,
+                destination: msg.to,
+                responseDestination: msg.to,
+                customPayload: null,
+                forwardTonAmount: RELEASE_NOTIFY_TON,
+                forwardPayload: null,
+            };
+            sendJettonTransfer(storage.jettonWallet!, PAYOUT_GAS + RELEASE_NOTIFY_TON, SEND_MODE_REGULAR, transfer);
         }
 
         ConfigureRouter => {

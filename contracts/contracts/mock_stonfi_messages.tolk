@@ -1,38 +1,31 @@
 // Mock STON.fi v2 message surface. Test infrastructure: a faithful-at-the-wire
-// stand-in for the real Router/Pool/LpAccount, which are external FunC and cannot
-// run in the sandbox. We model the documented opcodes (provide_lp 0x37c096df, the
-// jetton transfer_notification carrying a DEX forward payload, and the LP mint that
-// comes back) so C6 can be tested against this as an oracle. Internals the adapter
-// never observes (LpAccount accumulation, dual-token reserves, deadline/refund
-// routing) are collapsed into a single-asset reserve model in the pool.
+// stand-in for the real Router/Pool/LpAccount/LpWallet, which are external FunC
+// and cannot run in the sandbox. We model the documented flow so C6 can be tested
+// against it as an oracle: provide_lp (0x37c096df) in, LP jettons minted back, and
+// LP burned out releases the underlying via the router vault (the real pay_to path).
+// The pool is the LP jetton master, so an LP burn notifies the pool directly, the
+// way STON.fi v2 wires it. Internals the adapter never observes (LpAccount
+// accumulation, dual-token reserves, deadline/refund routing) collapse into a
+// single-asset reserve model; yield is modeled by growing reserve, not lpSupply.
 import "shared"
 
-// Documented STON.fi op. The user/adapter sends underlying jettons to the router's
-// jetton wallet with this op leading the forward payload; the router then forwards
-// provide_lp to the pool.
-const OP_STONFI_PROVIDE_LP = 0x37c096df;
-
-// Configure ops for the stub (test-range, deliberately outside the shared ABI).
+// Stub ops (test-range, deliberately outside the shared ABI).
 const OP_CFG_STONFI_ROUTER = 0x7e571001;
 const OP_CFG_STONFI_POOL = 0x7e571002;
+const OP_STONFI_PAYOUT = 0x7e571003;
+const OP_STONFI_ACCRUE = 0x7e571004;
+
+// Standard jetton burn notification op (mock-jetton wallet -> its master).
+const OP_BURN_NOTIFICATION = 0x7bdd97de;
 
 // Stub-local errors.
 const ERR_STONFI_NOT_CONFIGURED = 810;
 const ERR_STONFI_SLIPPAGE = 811;
+const ERR_STONFI_INSUFFICIENT_LP = 812;
 
-// Forward payload C6 packs into the jetton transfer and the router reads back out
-// of transfer_notification. Single-sided provide sets bothPositive = false; the
-// pool auto-swaps and mints whatever LP the deposit is worth.
-struct ProvideLpForward {
-    op: uint32
-    minLpOut: coins
-    toAddress: address
-    bothPositive: bool
-}
-
-// Router -> pool. Mirrors provide_lp#37c096df; the cross-body fields the adapter
-// cares about (to_address, min_lp_out, both_positive) are carried, the routing-only
-// fields are dropped since the stub holds the underlying in the router vault.
+// Router -> pool. Mirrors provide_lp#37c096df, carrying the cross-body fields the
+// adapter sets; routing-only fields are dropped since the stub holds the underlying
+// in the router vault.
 struct (0x37c096df) ProvideLp {
     queryId: uint64
     amount: coins
@@ -41,11 +34,10 @@ struct (0x37c096df) ProvideLp {
     bothPositive: bool
 }
 
-// LP mint wire, byte-compatible with the mock-jetton minter (MintNewJettons
-// 0x00000015 -> InternalTransferStep 0x178d4519). Redefined here to keep the stub
-// self-contained rather than importing across the mock-jetton package. The internal
-// body ends after forwardTon; the wallet reads its forwardPayload as an empty
-// remainder, and a zero forwardTon means no owner notification on mint.
+// internal_transfer body the pool sends to deploy/credit an LP wallet. Ends after
+// forwardTon; the wallet reads its forwardPayload as an empty remainder, and a zero
+// forwardTon means no owner notification on mint. Byte-compatible with the
+// mock-jetton wallet's InternalTransferStep (0x178d4519).
 struct (0x178d4519) LpMintInternal {
     queryId: uint64
     amount: coins
@@ -54,9 +46,45 @@ struct (0x178d4519) LpMintInternal {
     forwardTon: coins
 }
 
-struct (0x00000015) MintLp {
+// Burn notification the LP wallet sends to its master (the pool) on burn.
+// Byte-compatible with the mock-jetton wallet's BurnNotificationForMinter.
+struct (0x7bdd97de) LpBurnNotification {
     queryId: uint64
-    recipient: address
-    tonAmount: coins
-    body: Cell<LpMintInternal>
+    jettonAmount: coins
+    burnInitiator: address
+    sendExcessesTo: address?
+}
+
+// pool -> router: release `amount` underlying from the vault to `to` (the real
+// pay_to leg). Router-gated to the pool.
+struct (0x7e571003) PayOut {
+    queryId: uint64
+    to: address
+    amount: coins
+}
+
+// admin -> pool: grow reserve to model accrued swap fees. lpSupply is untouched, so
+// each LP token redeems for more underlying afterward.
+struct (0x7e571004) AccrueYield {
+    queryId: uint64
+    amount: coins
+}
+
+// LP wallet address calc. WalletStorage layout mirrors the mock-jetton wallet
+// ({jettonBalance, ownerAddress, minterAddress}) so the addresses the pool computes
+// match the real wallets the mock jetton deploys. Kept local to avoid importing
+// across the mock-jetton package.
+struct LpWalletStorage {
+    jettonBalance: coins
+    ownerAddress: address
+    minterAddress: address
+}
+
+fun lpDeployTarget(owner: address, master: address, walletCode: cell): AutoDeployAddress {
+    val s: LpWalletStorage = { jettonBalance: 0, ownerAddress: owner, minterAddress: master };
+    return { stateInit: { code: walletCode, data: s.toCell() } };
+}
+
+fun lpWalletAddress(owner: address, master: address, walletCode: cell) {
+    return lpDeployTarget(owner, master, walletCode).calculateAddress();
 }

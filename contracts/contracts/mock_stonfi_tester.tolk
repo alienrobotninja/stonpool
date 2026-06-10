@@ -1,4 +1,5 @@
 import "shared"
+import "stonfi_protocol"
 import "mock_stonfi_messages"
 
 fun onInternalMessage(in: InMessage) {}
@@ -26,8 +27,12 @@ get fun packLpMintInternal(): cell {
     return m.toCell();
 }
 
-get fun packMintLp(to: address): cell {
-    val it: LpMintInternal = { queryId: 42, amount: 9, initiator: null, excessesTo: null, forwardTon: 0 };
-    val m: MintLp = { queryId: 42, recipient: to, tonAmount: ton("0.1"), body: it.toCell() };
+get fun packPayOut(to: address): cell {
+    val m: PayOut = { queryId: 42, to: to, amount: 500 };
+    return m.toCell();
+}
+
+get fun packAccrueYield(): cell {
+    val m: AccrueYield = { queryId: 42, amount: 200 };
     return m.toCell();
 }
