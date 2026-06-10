@@ -1,105 +1,62 @@
-// Mock STON.fi pool stub. Tracks the pool's accounting only: a single-asset
-// `reserve` (total underlying value the LP supply is a claim on) and `lpSupply`.
-// On provide_lp from the router it mints LP proportional to the deposit's share of
-// the reserve, the way a balanced stable pool would after auto-swapping a
-// single-sided deposit. Yield is later modeled (S2) by growing reserve without
-// growing lpSupply, so each LP token redeems for more underlying. LP tokens are a
-// real instance of the mock jetton with this pool as the minter admin.
+// Mock STON.fi v2 message surface. Test infrastructure: a faithful-at-the-wire
+// stand-in for the real Router/Pool/LpAccount, which are external FunC and cannot
+// run in the sandbox. We model the documented opcodes (provide_lp 0x37c096df, the
+// jetton transfer_notification carrying a DEX forward payload, and the LP mint that
+// comes back) so C6 can be tested against this as an oracle. Internals the adapter
+// never observes (LpAccount accumulation, dual-token reserves, deadline/refund
+// routing) are collapsed into a single-asset reserve model in the pool.
 import "shared"
-import "mock_stonfi_messages"
 
-const LP_MINT_TON = ton("0.1");
+// Documented STON.fi op. The user/adapter sends underlying jettons to the router's
+// jetton wallet with this op leading the forward payload; the router then forwards
+// provide_lp to the pool.
+const OP_STONFI_PROVIDE_LP = 0x37c096df;
 
-@overflow1023_policy("suppress")
-struct PoolStorage {
-    adminAddress: address
-    router: address?
-    lpMinter: address?
-    reserve: coins
-    lpSupply: coins
+// Configure ops for the stub (test-range, deliberately outside the shared ABI).
+const OP_CFG_STONFI_ROUTER = 0x7e571001;
+const OP_CFG_STONFI_POOL = 0x7e571002;
+
+// Stub-local errors.
+const ERR_STONFI_NOT_CONFIGURED = 810;
+const ERR_STONFI_SLIPPAGE = 811;
+
+// Forward payload C6 packs into the jetton transfer and the router reads back out
+// of transfer_notification. Single-sided provide sets bothPositive = false; the
+// pool auto-swaps and mints whatever LP the deposit is worth.
+struct ProvideLpForward {
+    op: uint32
+    minLpOut: coins
+    toAddress: address
+    bothPositive: bool
 }
 
-fun PoolStorage.load() {
-    return PoolStorage.fromCell(contract.getData())
-}
-fun PoolStorage.save(self) {
-    contract.setData(self.toCell())
-}
-
-struct (0x7e571002) ConfigurePool {
+// Router -> pool. Mirrors provide_lp#37c096df; the cross-body fields the adapter
+// cares about (to_address, min_lp_out, both_positive) are carried, the routing-only
+// fields are dropped since the stub holds the underlying in the router vault.
+struct (0x37c096df) ProvideLp {
     queryId: uint64
-    router: address
-    lpMinter: address
+    amount: coins
+    toAddress: address
+    minLpOut: coins
+    bothPositive: bool
 }
 
-type AllowedMessageToPool = ProvideLp | ConfigurePool
-
-fun lpForDeposit(amount: coins, reserve: coins, lpSupply: coins): coins {
-    if (lpSupply == 0) {
-        return amount; // bootstrap: LP:underlying starts 1:1
-    }
-    return amount * lpSupply / reserve;
+// LP mint wire, byte-compatible with the mock-jetton minter (MintNewJettons
+// 0x00000015 -> InternalTransferStep 0x178d4519). Redefined here to keep the stub
+// self-contained rather than importing across the mock-jetton package. The internal
+// body ends after forwardTon; the wallet reads its forwardPayload as an empty
+// remainder, and a zero forwardTon means no owner notification on mint.
+struct (0x178d4519) LpMintInternal {
+    queryId: uint64
+    amount: coins
+    initiator: address?
+    excessesTo: address?
+    forwardTon: coins
 }
 
-fun onInternalMessage(in: InMessage) {
-    val msg = lazy AllowedMessageToPool.fromSlice(in.body);
-
-    match (msg) {
-        ProvideLp => {
-            var storage = lazy PoolStorage.load();
-            assert ((storage.router != null) & (storage.lpMinter != null)) throw ERR_STONFI_NOT_CONFIGURED;
-            assert (in.senderAddress == storage.router!) throw ERR_UNAUTHORIZED;
-
-            val lpOut = lpForDeposit(msg.amount, storage.reserve, storage.lpSupply);
-            assert (lpOut >= msg.minLpOut && lpOut != 0) throw ERR_STONFI_SLIPPAGE;
-
-            storage.reserve += msg.amount;
-            storage.lpSupply += lpOut;
-            storage.save();
-
-            val it: LpMintInternal = {
-                queryId: msg.queryId,
-                amount: lpOut,
-                initiator: null,
-                excessesTo: null,
-                forwardTon: 0,
-            };
-            val mint: MintLp = {
-                queryId: msg.queryId,
-                recipient: msg.toAddress,
-                tonAmount: LP_MINT_TON,
-                body: it.toCell(),
-            };
-            createMessage({
-                bounce: BounceMode.Only256BitsOfBody,
-                dest: storage.lpMinter!,
-                value: 0,
-                body: mint,
-            }).send(SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
-        }
-
-        ConfigurePool => {
-            var storage = lazy PoolStorage.load();
-            assert (in.senderAddress == storage.adminAddress) throw ERR_UNAUTHORIZED;
-            storage.router = msg.router;
-            storage.lpMinter = msg.lpMinter;
-            storage.save();
-        }
-
-        else => {
-            assert (in.body.isEmpty()) throw 0xFFFF
-        }
-    }
-}
-
-get fun get_pool_data(): (address, address?, address?, coins, coins) {
-    val storage = lazy PoolStorage.load();
-    return (storage.adminAddress, storage.router, storage.lpMinter, storage.reserve, storage.lpSupply);
-}
-
-// LP redemption rate as (reserve, lpSupply); off-chain readers compute
-// underlyingPerLp = reserve / lpSupply. Quoted here so C6 (S5/S6) can size burns.
-get fun get_lp_quote(): (coins, coins) {
-    val storage = lazy PoolStorage.load();
-    return (storage.reserve, storage.lpSupply);
+struct (0x00000015) MintLp {
+    queryId: uint64
+    recipient: address
+    tonAmount: coins
+    body: Cell<LpMintInternal>
 }

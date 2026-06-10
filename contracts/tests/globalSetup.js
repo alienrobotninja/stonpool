@@ -22,6 +22,7 @@ const TARGETS = {
   pool_core: 'pool_core.tolk',
   mock_stonfi_router: 'mock_stonfi_router.tolk',
   mock_stonfi_pool: 'mock_stonfi_pool.tolk',
+  mock_stonfi_tester: 'mock_stonfi_tester.tolk',
 };
 
 module.exports = async () => {
