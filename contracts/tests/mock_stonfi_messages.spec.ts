@@ -6,7 +6,8 @@ import { loadCode } from './helpers';
 // Mirrors the literal opcodes/layout in mock_stonfi_messages.tolk.
 const OP_PROVIDE_LP = 0x37c096df;
 const OP_INTERNAL_TRANSFER = 0x178d4519;
-const OP_MINT = 0x00000015;
+const OP_PAYOUT = 0x7e571003;
+const OP_ACCRUE = 0x7e571004;
 
 class Tester implements Contract {
   constructor(readonly address: Address, readonly init: { code: Cell; data: Cell }) {}
@@ -83,16 +84,16 @@ describe('mock STON.fi message layouts (S1)', () => {
     expect(got).toEqualCell(exp);
   });
 
-  it('MintLp is byte-compatible with the jetton minter mint wire', async () => {
+  it('PayOut: op + queryId + to + amount', async () => {
     const to = deployer.address;
-    const innerExp = beginCell()
-      .storeUint(OP_INTERNAL_TRANSFER, 32).storeUint(42, 64).storeCoins(9)
-      .storeAddress(null).storeAddress(null).storeCoins(0)
-      .endCell();
-    const got = await tester.getCell('packMintLp', [addrSlice(to)]);
-    const exp = beginCell()
-      .storeUint(OP_MINT, 32).storeUint(42, 64).storeAddress(to).storeCoins(100_000_000n).storeRef(innerExp)
-      .endCell();
+    const got = await tester.getCell('packPayOut', [addrSlice(to)]);
+    const exp = beginCell().storeUint(OP_PAYOUT, 32).storeUint(42, 64).storeAddress(to).storeCoins(500).endCell();
+    expect(got).toEqualCell(exp);
+  });
+
+  it('AccrueYield: op + queryId + amount', async () => {
+    const got = await tester.getCell('packAccrueYield');
+    const exp = beginCell().storeUint(OP_ACCRUE, 32).storeUint(42, 64).storeCoins(200).endCell();
     expect(got).toEqualCell(exp);
   });
 });

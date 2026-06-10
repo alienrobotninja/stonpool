@@ -5,10 +5,9 @@ import { loadCode } from './helpers';
 
 const OP_TRANSFER_NOTIFICATION = 0x7362d09c;
 const OP_PROVIDE_LP = 0x37c096df;
+const OP_INTERNAL_TRANSFER = 0x178d4519;
 const OP_CFG_ROUTER = 0x7e571001;
 const OP_CFG_POOL = 0x7e571002;
-const OP_MINT = 0x00000015;
-const OP_INTERNAL_TRANSFER = 0x178d4519;
 
 const ERR_UNAUTHORIZED = 401;
 const ERR_WRONG_SENDER = 402;
@@ -26,13 +25,6 @@ const notif = (amount: bigint, from: Address, fwd?: Builder, queryId = 0) => {
   if (fwd) b = b.storeBuilder(fwd);
   return b.endCell();
 };
-
-class Minter implements Contract {
-  constructor(readonly address: Address, readonly init: { code: Cell; data: Cell }) {}
-  async sendDeploy(provider: ContractProvider, via: Sender) {
-    await provider.internal(via, { value: 200_000_000n, body: beginCell().endCell() });
-  }
-}
 
 class Router implements Contract {
   constructor(readonly address: Address, readonly init: { code: Cell; data: Cell }) {}
@@ -56,10 +48,10 @@ class Pool implements Contract {
   async sendDeploy(provider: ContractProvider, via: Sender) {
     await provider.internal(via, { value: 200_000_000n, body: beginCell().endCell() });
   }
-  async sendConfigure(provider: ContractProvider, via: Sender, router: Address, lpMinter: Address) {
+  async sendConfigure(provider: ContractProvider, via: Sender, router: Address) {
     await provider.internal(via, {
       value: 100_000_000n,
-      body: beginCell().storeUint(OP_CFG_POOL, 32).storeUint(0, 64).storeAddress(router).storeAddress(lpMinter).endCell(),
+      body: beginCell().storeUint(OP_CFG_POOL, 32).storeUint(0, 64).storeAddress(router).endCell(),
     });
   }
   // direct provide_lp injection, for the auth-negative test
@@ -71,7 +63,7 @@ class Pool implements Contract {
   }
   async getData(provider: ContractProvider) {
     const s = (await provider.get('get_pool_data', [])).stack;
-    return { admin: s.readAddress(), router: s.readAddressOpt(), lpMinter: s.readAddressOpt(), reserve: s.readBigNumber(), lpSupply: s.readBigNumber() };
+    return { admin: s.readAddress(), router: s.readAddressOpt(), reserve: s.readBigNumber(), lpSupply: s.readBigNumber() };
   }
 }
 
@@ -84,25 +76,24 @@ class Reader implements Contract {
 
 describe('mock STON.fi provide path (S1)', () => {
   let bc: Blockchain;
-  let walletCode: Cell, minterCode: Cell, routerCode: Cell, poolCode: Cell;
+  let walletCode: Cell, routerCode: Cell, poolCode: Cell;
   let admin: SandboxContract<TreasuryContract>;
-  let routerWallet: SandboxContract<TreasuryContract>; // stands in for the router's underlying jetton wallet
+  let routerWallet: SandboxContract<TreasuryContract>; // stands in for the router's underlying vault wallet
   let stranger: SandboxContract<TreasuryContract>;
   let alice: SandboxContract<TreasuryContract>;
   let bob: SandboxContract<TreasuryContract>;
   let router: SandboxContract<Router>;
   let pool: SandboxContract<Pool>;
-  let lpMinter: SandboxContract<Minter>;
 
   beforeAll(() => {
     walletCode = loadCode('wallet');
-    minterCode = loadCode('minter');
     routerCode = loadCode('mock_stonfi_router');
     poolCode = loadCode('mock_stonfi_pool');
   });
 
+  // LP wallets are minted with the pool as their master
   const lpWallet = (owner: Address) =>
-    contractAddress(0, { code: walletCode, data: walletData(0n, owner, lpMinter.address) });
+    contractAddress(0, { code: walletCode, data: walletData(0n, owner, pool.address) });
   const lpBalance = (owner: Address) => bc.openContract(new Reader(lpWallet(owner))).getBalance();
 
   async function setup(opts: { wire?: boolean } = {}) {
@@ -119,25 +110,19 @@ describe('mock STON.fi provide path (S1)', () => {
     router = bc.openContract(new Router(contractAddress(0, rInit), rInit));
     await router.sendDeploy(admin.getSender());
 
-    const pData = beginCell().storeAddress(admin.address).storeAddress(null).storeAddress(null).storeCoins(0).storeCoins(0).endCell();
+    // pool storage: admin, router(null), reserve(0), lpSupply(0), lpWalletCode
+    const pData = beginCell().storeAddress(admin.address).storeAddress(null).storeCoins(0).storeCoins(0).storeRef(walletCode).endCell();
     const pInit = { code: poolCode, data: pData };
     pool = bc.openContract(new Pool(contractAddress(0, pInit), pInit));
     await pool.sendDeploy(admin.getSender());
 
-    // LP minter: the pool is its admin so only the pool can mint LP
-    const content = beginCell().storeUint(0x01, 8).endCell();
-    const mData = beginCell().storeCoins(0).storeAddress(pool.address).storeRef(content).storeRef(walletCode).endCell();
-    const mInit = { code: minterCode, data: mData };
-    lpMinter = bc.openContract(new Minter(contractAddress(0, mInit), mInit));
-    await lpMinter.sendDeploy(admin.getSender());
-
     if (wire) {
       await router.sendConfigure(admin.getSender(), routerWallet.address, pool.address);
-      await pool.sendConfigure(admin.getSender(), router.address, lpMinter.address);
+      await pool.sendConfigure(admin.getSender(), router.address);
     }
   }
 
-  // simulate the router's jetton wallet notifying it of an inbound provide_lp deposit
+  // simulate the router's vault wallet notifying it of an inbound provide_lp deposit
   const provide = (amount: bigint, to: Address, minLpOut = 1n, from: Address = routerWallet.address) =>
     bc.sendMessage(internal({ from, to: router.address, value: 1_000_000_000n, body: notif(amount, alice.address, provideFwd(minLpOut, to)) }));
 
@@ -148,14 +133,13 @@ describe('mock STON.fi provide path (S1)', () => {
     expect(r.jettonWallet!.equals(routerWallet.address)).toBe(true);
     expect(r.pool!.equals(pool.address)).toBe(true);
     expect(p.router!.equals(router.address)).toBe(true);
-    expect(p.lpMinter!.equals(lpMinter.address)).toBe(true);
   });
 
   it('provide routes through to the pool and mints LP to the provider', async () => {
     await setup();
     const res = await provide(1000n, alice.address);
     expect(res.transactions).toHaveTransaction({ from: router.address, to: pool.address, op: OP_PROVIDE_LP, success: true });
-    expect(res.transactions).toHaveTransaction({ from: pool.address, to: lpMinter.address, op: OP_MINT, success: true });
+    expect(res.transactions).toHaveTransaction({ from: pool.address, to: lpWallet(alice.address), op: OP_INTERNAL_TRANSFER, success: true });
     expect(await lpBalance(alice.address)).toBe(1000n); // bootstrap mint is 1:1
     const p = await pool.getData();
     expect(p.reserve).toBe(1000n);
