@@ -10,7 +10,10 @@
 import "shared"
 import "mock_stonfi_messages"
 
-const LP_MINT_TON = ton("0.1");
+const LP_MINT_TON = ton("0.2");
+// LP mint forwards a small notification so the recipient (C6) is told the minted
+// amount and can track its lpBalance precisely; plain holders ignore it.
+const LP_MINT_NOTIFY_TON = ton("0.05");
 
 @overflow1023_policy("suppress")
 struct PoolStorage {
@@ -63,7 +66,7 @@ fun onInternalMessage(in: InMessage) {
                 amount: lpOut,
                 initiator: null,
                 excessesTo: null,
-                forwardTon: 0,
+                forwardTon: LP_MINT_NOTIFY_TON,
             };
             createMessage({
                 bounce: BounceMode.Only256BitsOfBody,
