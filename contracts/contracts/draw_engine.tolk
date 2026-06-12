@@ -5,6 +5,7 @@ import "draw_messages"
 
 const ERR_ALREADY_COMMITTED = 435
 const ERR_ALREADY_REVEALED = 436
+const DRAW_RESULT_GAS = ton("0.5") // gas allowance so pool-core can run the payout
 
 struct CommitState {
     commitHash: uint256
@@ -112,7 +113,7 @@ fun onInternalMessage(in: InMessage) {
             // hand the result and the slashed pot to pool-core
             val result: DrawResult = { epoch: s.epoch, seed: s.seed };
             val out: DrawResultMsg = { queryId: msg.queryId, result: result };
-            createMessage({ bounce: BounceMode.NoBounce, dest: s.poolCore, value: slashed, body: out }).send(SEND_MODE_PAY_FEES_SEPARATELY);
+            createMessage({ bounce: BounceMode.NoBounce, dest: s.poolCore, value: slashed + DRAW_RESULT_GAS, body: out }).send(SEND_MODE_PAY_FEES_SEPARATELY);
         }
 
         else => {
@@ -157,4 +158,3 @@ get fun get_tallies(): (int, int) {
     }
     return (total, revealed);
 }
-

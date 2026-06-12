@@ -41,6 +41,9 @@ class Ledger implements Contract {
   async getTierWord(p: ContractProvider, seed: bigint, tier: number): Promise<bigint> {
     return (await p.get('tier_word', [intArg(seed), intArg(BigInt(tier))])).stack.readBigNumber();
   }
+  async getEligibleCount(p: ContractProvider): Promise<bigint> {
+    return (await p.get('get_eligible_count', [])).stack.readBigNumber();
+  }
 }
 
 function ledgerData(epoch: number, minHold: number): Cell {
@@ -126,6 +129,13 @@ describe('C2 selection ledger', () => {
     expect(w0).toBe(h(0));
     expect(w1).toBe(h(1));
     expect(w0).not.toBe(w1);
+  });
+
+
+  it('eligible_count excludes min-hold failures (participants stay counted separately)', async () => {
+    const led = await seeded();
+    expect(await led.getCount()).toBe(4n);          // A,B,C,D present
+    expect(await led.getEligibleCount()).toBe(3n);  // D excluded by min-hold
   });
 
 });

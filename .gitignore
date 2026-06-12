@@ -62,8 +62,6 @@ Thumbs.db
 .vscode/
 *.swp
 
-# Docker
-.dockerignore
 
 # Git
 .git 

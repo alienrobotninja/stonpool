@@ -69,6 +69,17 @@ fun participantCount(ledger: Ledger): int {
     return n;
 }
 
+// count of entries eligible to win this epoch (used to cap prize tiers).
+fun eligibleCount(ledger: Ledger, currentEpoch: EpochId, minHoldEpochs: uint16): int {
+    var n = 0;
+    var r = ledger.findFirst();
+    while (r.isFound) {
+        if (isEligible(r.loadValue(), currentEpoch, minHoldEpochs)) { n += 1; }
+        r = ledger.iterateNext(r);
+    }
+    return n;
+}
+
 // addr's share of the eligible weight, in basis points (0 if absent or ineligible).
 fun oddsBps(ledger: Ledger, who: address, currentEpoch: EpochId, minHoldEpochs: uint16): int {
     val found = ledger.get(who);

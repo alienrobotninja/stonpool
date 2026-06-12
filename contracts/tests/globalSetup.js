@@ -17,6 +17,13 @@ const TARGETS = {
   draw_selection_tester: 'draw_selection_tester.tolk',
   selection_tester: 'selection_tester.tolk',
   draw_engine: 'draw_engine.tolk',
+  param_governor: 'param_governor.tolk',
+  jetton_vault: 'jetton_vault.tolk',
+  pool_core: 'pool_core.tolk',
+  mock_stonfi_router: 'mock_stonfi_router.tolk',
+  mock_stonfi_pool: 'mock_stonfi_pool.tolk',
+  mock_stonfi_tester: 'mock_stonfi_tester.tolk',
+  yield_adapter_stonfi: 'yield_adapter_stonfi.tolk',
 };
 
 module.exports = async () => {
