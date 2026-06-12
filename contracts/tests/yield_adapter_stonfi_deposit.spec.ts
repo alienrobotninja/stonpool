@@ -141,7 +141,7 @@ describe('C6 stonfi adapter deposit path (S4)', () => {
     pool = bc.openContract(new Pool(contractAddress(0, pInit), pInit));
     await pool.sendDeploy(admin.getSender());
 
-    const aData = beginCell().storeAddress(admin.address).storeCoins(0).storeCoins(0).storeBit(false).endCell();
+    const aData = beginCell().storeAddress(admin.address).storeCoins(0).storeCoins(0).storeUint(0, 16).storeBit(false).endCell();
     const aInit = { code: adapterCode, data: aData };
     adapter = bc.openContract(new Adapter(contractAddress(0, aInit), aInit));
     await adapter.sendDeploy(admin.getSender());

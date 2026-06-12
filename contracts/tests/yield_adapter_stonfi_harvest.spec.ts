@@ -5,14 +5,16 @@ import { loadCode } from './helpers';
 
 const OP_TRANSFER = 0x0f8a7ea5;
 const OP_DEPOSIT_PRINCIPAL = 0x10000031;
-const OP_WITHDRAW_PRINCIPAL = 0x10000032;
+const OP_HARVEST_YIELD = 0x10000033;
 const OP_ADAPTER_REPORT = 0x10000034;
+const OP_HARVEST_STONFI = 0x10000035;
 const OP_MINT = 0x00000015;
 const OP_INTERNAL_TRANSFER = 0x178d4519;
 const OP_ACCRUE = 0x7e571004;
 const OP_CFG_ROUTER = 0x7e571001;
 const OP_CFG_POOL = 0x7e571002;
 const OP_CFG_ADAPTER = 0x10000074;
+const OP_CFG_FEE = 0x10000075;
 
 const ERR_UNAUTHORIZED = 401;
 const ERR_INSUFFICIENT_PRINCIPAL = 803;
@@ -25,6 +27,11 @@ const walletData = (bal: bigint, owner: Address, minter: Address) =>
 const internalTransferStep = (amount: bigint) =>
   beginCell().storeUint(OP_INTERNAL_TRANSFER, 32).storeUint(0, 64).storeCoins(amount)
     .storeAddress(null).storeAddress(null).storeCoins(0).endCell();
+
+// expected AdapterReportMsg body, to assert the exact harvested figure
+const reportBody = (op: number, principal: bigint, yieldAmount: bigint) =>
+  beginCell().storeUint(OP_ADAPTER_REPORT, 32).storeUint(0, 64)
+    .storeUint(op, 32).storeCoins(principal).storeCoins(yieldAmount).storeBit(true).endCell();
 
 class Minter implements Contract {
   constructor(readonly address: Address, readonly init: { code: Cell; data: Cell }) {}
@@ -87,9 +94,17 @@ class Adapter implements Contract {
       body: beginCell().storeUint(OP_CFG_ADAPTER, 32).storeUint(0, 64).storeUint(role, 8).storeAddress(addr).endCell(),
     });
   }
+  async sendFee(provider: ContractProvider, via: Sender, feeBps: number) {
+    await provider.internal(via, {
+      value: 100_000_000n,
+      body: beginCell().storeUint(OP_CFG_FEE, 32).storeUint(0, 64).storeUint(feeBps, 16).endCell(),
+    });
+  }
   async getData(provider: ContractProvider) {
     const s = (await provider.get('get_adapter_data', [])).stack;
-    return { admin: s.readAddress(), principal: s.readBigNumber(), lpBalance: s.readBigNumber() };
+    const admin = s.readAddress(); const principal = s.readBigNumber(); const lpBalance = s.readBigNumber();
+    s.readAddressOpt(); s.readAddressOpt(); s.readAddressOpt(); s.readAddressOpt(); s.readAddressOpt();
+    return { admin, principal, lpBalance, feeBps: s.readBigNumber() };
   }
 }
 
@@ -100,13 +115,13 @@ class Reader implements Contract {
   }
 }
 
-describe('C6 stonfi adapter withdraw path (S5)', () => {
+describe('C6 stonfi adapter harvest path (S6)', () => {
   let bc: Blockchain;
   let walletCode: Cell, minterCode: Cell, routerCode: Cell, poolCode: Cell, adapterCode: Cell;
   let admin: SandboxContract<TreasuryContract>;
   let usdtAdmin: SandboxContract<TreasuryContract>;
   let poolCore: SandboxContract<TreasuryContract>;
-  let user: SandboxContract<TreasuryContract>;
+  let vault: SandboxContract<TreasuryContract>;
   let stranger: SandboxContract<TreasuryContract>;
   let usdt: SandboxContract<Minter>;
   let router: SandboxContract<Router>;
@@ -125,12 +140,12 @@ describe('C6 stonfi adapter withdraw path (S5)', () => {
   const lpWallet = (owner: Address) => contractAddress(0, { code: walletCode, data: walletData(0n, owner, pool.address) });
   const usdtBalance = (owner: Address) => bc.openContract(new Reader(usdtWallet(owner))).getBalance();
 
-  async function setup() {
+  async function setup({ feeBps = 0 } = {}) {
     bc = await Blockchain.create();
     admin = await bc.treasury('admin');
     usdtAdmin = await bc.treasury('usdtAdmin');
     poolCore = await bc.treasury('poolCore');
-    user = await bc.treasury('user');
+    vault = await bc.treasury('vault');
     stranger = await bc.treasury('stranger');
 
     const content = beginCell().storeUint(0x01, 8).endCell();
@@ -162,6 +177,7 @@ describe('C6 stonfi adapter withdraw path (S5)', () => {
     await adapter.sendConfigure(admin.getSender(), ROLE.ROUTER, router.address);
     await adapter.sendConfigure(admin.getSender(), ROLE.LP_WALLET, lpWallet(adapter.address));
     await adapter.sendConfigure(admin.getSender(), ROLE.STONFI_POOL, pool.address);
+    if (feeBps > 0) await adapter.sendFee(admin.getSender(), feeBps);
 
     await usdt.sendMint(usdtAdmin.getSender(), poolCore.address, 1_000_000n);
   }
@@ -174,66 +190,81 @@ describe('C6 stonfi adapter withdraw path (S5)', () => {
         .storeUint(OP_DEPOSIT_PRINCIPAL, 32).endCell(),
     }));
 
-  // pool-core asks the adapter to redeem `amount` of principal to `to`
-  const withdraw = (amount: bigint, to: Address, from: Address = poolCore.address) =>
+  // keeper-attested harvest, as the off-chain indexer would size it from get_lp_quote
+  const harvest = (lpToBurn: bigint, grossYield: bigint, from: Address = admin.address) =>
     bc.sendMessage(internal({
       from, to: adapter.address, value: 2_000_000_000n,
-      body: beginCell().storeUint(OP_WITHDRAW_PRINCIPAL, 32).storeUint(0, 64).storeCoins(amount).storeAddress(to).endCell(),
+      body: beginCell().storeUint(OP_HARVEST_STONFI, 32).storeUint(0, 64)
+        .storeCoins(lpToBurn).storeCoins(grossYield).storeAddress(vault.address).endCell(),
     }));
 
-  it('full withdraw burns all LP and returns principal to the depositor', async () => {
+  // pool-core's epoch-advance harvest
+  const epochHarvest = (from: Address = poolCore.address) =>
+    bc.sendMessage(internal({
+      from, to: adapter.address, value: 200_000_000n,
+      body: beginCell().storeUint(OP_HARVEST_YIELD, 32).storeUint(0, 64).storeAddress(vault.address).endCell(),
+    }));
+
+  it('keeper harvest burns yield-LP to the vault and reports the yield, principal untouched', async () => {
     await setup();
     await deposit(1000n);
-    const res = await withdraw(1000n, user.address);
-    expect(res.transactions).toHaveTransaction({ from: adapter.address, to: poolCore.address, op: OP_ADAPTER_REPORT, success: true });
-    expect(await usdtBalance(user.address)).toBe(1000n);
+    await pool.sendAccrue(admin.getSender(), 250n); // reserve 1250, lpSupply 1000 -> 250 underlying of yield
+    // backend sizes it: burn 200 LP -> releases 200*1250/1000 = 250 underlying
+    const res = await harvest(200n, 250n);
+    expect(res.transactions).toHaveTransaction({ from: adapter.address, to: poolCore.address, body: reportBody(OP_HARVEST_YIELD, 1000n, 250n) });
+    expect(await usdtBalance(vault.address)).toBe(250n);
     const d = await adapter.getData();
-    expect(d.principal).toBe(0n);
-    expect(d.lpBalance).toBe(0n);
+    expect(d.principal).toBe(1000n); // principal stays deployed
+    expect(d.lpBalance).toBe(800n);
     const p = await pool.getData();
-    expect(p.reserve).toBe(0n);
-    expect(p.lpSupply).toBe(0n);
+    expect(p.reserve).toBe(1000n); // back to principal-backing only
+    expect(p.lpSupply).toBe(800n);
   });
 
-  it('partial withdraw redeems a proportional LP share', async () => {
-    await setup();
+  it('fee is netted from the reported yield but the full release reaches the vault', async () => {
+    await setup({ feeBps: 100 }); // 1%
     await deposit(1000n);
-    await withdraw(400n, user.address);
-    expect(await usdtBalance(user.address)).toBe(400n);
-    const d = await adapter.getData();
-    expect(d.principal).toBe(600n);
-    expect(d.lpBalance).toBe(600n);
-    const p = await pool.getData();
-    expect(p.reserve).toBe(600n);
-    expect(p.lpSupply).toBe(600n);
+    await pool.sendAccrue(admin.getSender(), 250n);
+    const res = await harvest(200n, 250n); // gross 250, net 250 - 2 = 248
+    expect(res.transactions).toHaveTransaction({ from: adapter.address, to: poolCore.address, body: reportBody(OP_HARVEST_YIELD, 1000n, 248n) });
+    expect(await usdtBalance(vault.address)).toBe(250n); // fee remainder socialized in the vault
+    expect((await adapter.getData()).feeBps).toBe(100n);
   });
 
-  it('withdraw after yield carries the depositor their realized yield slice', async () => {
+  it('principal still redeems in full after yield is harvested', async () => {
     await setup();
     await deposit(1000n);
-    await pool.sendAccrue(admin.getSender(), 200n); // reserve 1000 -> 1200, lpSupply 1000
-    // withdraw 500 principal: burn 1000*500/1000 = 500 LP, release 500*1200/1000 = 600
-    await withdraw(500n, user.address);
-    expect(await usdtBalance(user.address)).toBe(600n);
-    const d = await adapter.getData();
-    expect(d.principal).toBe(500n); // principal ledger drops by the requested amount only
-    expect(d.lpBalance).toBe(500n);
+    await pool.sendAccrue(admin.getSender(), 250n);
+    await harvest(200n, 250n); // pool now reserve 1000 / lpSupply 800, adapter lp 800 / principal 1000
     const p = await pool.getData();
-    expect(p.reserve).toBe(600n);
-    expect(p.lpSupply).toBe(500n);
+    expect(p.reserve).toBe(1000n);
+    expect(p.lpSupply).toBe(800n);
+    const d = await adapter.getData();
+    expect(d.lpBalance).toBe(800n);
+    expect(d.principal).toBe(1000n);
   });
 
-  it('withdraw from a non-pool-core sender reverts (401)', async () => {
+  it('pool-core epoch harvest is a zero ack (real harvest is keeper-driven)', async () => {
     await setup();
     await deposit(1000n);
-    const res = await withdraw(500n, user.address, stranger.address);
+    await pool.sendAccrue(admin.getSender(), 250n);
+    const res = await epochHarvest();
+    expect(res.transactions).toHaveTransaction({ from: adapter.address, to: poolCore.address, body: reportBody(OP_HARVEST_YIELD, 1000n, 0n) });
+    expect((await adapter.getData()).lpBalance).toBe(1000n); // nothing burned
+  });
+
+  it('harvest from a non-keeper sender reverts (401)', async () => {
+    await setup();
+    await deposit(1000n);
+    await pool.sendAccrue(admin.getSender(), 250n);
+    const res = await harvest(200n, 250n, stranger.address);
     expect(res.transactions).toHaveTransaction({ to: adapter.address, success: false, exitCode: ERR_UNAUTHORIZED });
   });
 
-  it('withdraw above principal reverts (803)', async () => {
+  it('harvest above held LP reverts (803)', async () => {
     await setup();
     await deposit(1000n);
-    const res = await withdraw(1500n, user.address);
+    const res = await harvest(2000n, 250n);
     expect(res.transactions).toHaveTransaction({ to: adapter.address, success: false, exitCode: ERR_INSUFFICIENT_PRINCIPAL });
   });
 });

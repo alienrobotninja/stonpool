@@ -30,6 +30,7 @@ class Adapter implements Contract {
       router: s.readAddressOpt(),
       lpWallet: s.readAddressOpt(),
       stonfiPool: s.readAddressOpt(),
+      feeBps: s.readBigNumber(),
     };
   }
   async getDeployedValue(provider: ContractProvider) {
@@ -63,7 +64,7 @@ describe('C6 stonfi adapter surface (S3)', () => {
     stonfiPool = await bc.treasury('stonfiPool');
 
     const code = loadCode('yield_adapter_stonfi');
-    const data = beginCell().storeAddress(admin.address).storeCoins(0).storeCoins(0).storeBit(false).endCell();
+    const data = beginCell().storeAddress(admin.address).storeCoins(0).storeCoins(0).storeUint(0, 16).storeBit(false).endCell();
     const init = { code, data };
     adapter = bc.openContract(new Adapter(contractAddress(0, init), init));
     await adapter.sendDeploy(admin.getSender());

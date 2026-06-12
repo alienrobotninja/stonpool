@@ -23,6 +23,10 @@ const PROVIDE_MIN_LP_OUT = 1;            // permissive against the mock; an off-
 const ERR_INSUFFICIENT_PRINCIPAL = 803;
 const BURN_VALUE = ton("1.0");           // funds the burn chain (lp wallet -> pool -> router payout -> recipient)
 
+const BPS_DENOM = 10000;
+const OP_HARVEST_STONFI = 0x10000035;    // keeper -> C6: harvest with off-chain-quoted figures
+const OP_CONFIGURE_STONFI_FEE = 0x10000075;
+
 const ROLE_POOL_CORE = 0;    // the C1 pool-core that owns this adapter
 const ROLE_OWN_WALLET = 1;   // C6's own underlying (USDT) jetton wallet
 const ROLE_ROUTER = 2;       // STON.fi router (destination of provide transfers)
@@ -34,6 +38,7 @@ struct StonfiAdapterStorage {
     adminAddress: address
     principal: coins   // total underlying principal deposited; the no-loss obligation
     lpBalance: coins   // LP tokens C6 holds, tracked from mint/burn notifications
+    feeBps: uint16     // disclosed residual swap/pool fee, netted from harvested yield
     wiring: map<uint8, address>
 }
 
@@ -62,6 +67,22 @@ struct (0x10000074) ConfigureStonfiAdapter {
     queryId: uint64
     role: uint8
     addr: address
+}
+
+struct (0x10000075) ConfigureStonfiFee {
+    queryId: uint64
+    feeBps: uint16
+}
+
+// keeper -> C6: harvest the accrued yield. C6 cannot read the pool's reserve/lpSupply
+// on-chain, so the off-chain indexer sizes the redemption: burn `lpToBurn` LP (its
+// underlying is `grossYield`, routed to the vault) and report the fee-netted yield to
+// pool-core for the prize pot. Principal stays deployed.
+struct (0x10000035) HarvestStonfi {
+    queryId: uint64
+    lpToBurn: coins
+    grossYield: coins
+    to: address
 }
 
 // transfer command C6 sends to its own underlying wallet to provide liquidity:
@@ -103,7 +124,7 @@ struct (0x595f07bc) BurnLp {
     customPayload: cell?
 }
 
-type AllowedMessageToAdapter = ConfigureStonfiAdapter | JettonNotify | WithdrawPrincipal
+type AllowedMessageToAdapter = ConfigureStonfiAdapter | ConfigureStonfiFee | JettonNotify | WithdrawPrincipal | HarvestYield | HarvestStonfi
 
 fun reportTo(poolCore: address, queryId: uint64, reportedOp: uint32, principal: coins, yieldAmount: coins) {
     val report: AdapterReport = {
@@ -195,6 +216,42 @@ fun onInternalMessage(in: InMessage) {
             reportTo(poolCore!, msg.queryId, OP_WITHDRAW_PRINCIPAL, storage.principal, 0);
         }
 
+        HarvestStonfi => {
+            var storage = lazy StonfiAdapterStorage.load();
+            assert (in.senderAddress == storage.adminAddress) throw ERR_UNAUTHORIZED;
+            val poolCore = storage.wired(ROLE_POOL_CORE);
+            val lpWallet = storage.wired(ROLE_LP_WALLET);
+            assert ((poolCore != null) & (lpWallet != null)) throw ERR_NOT_CONFIGURED;
+            assert (storage.lpBalance >= msg.lpToBurn) throw ERR_INSUFFICIENT_PRINCIPAL;
+
+            // burn the yield-LP to the vault; principal-backing LP stays put. The fee is
+            // the disclosed residual swap/pool cost, kept out of the prize-eligible figure
+            // (it stays socialized in the vault). queryId 0 since pool-core only reads the op.
+            val netYield = msg.grossYield - msg.grossYield * storage.feeBps / BPS_DENOM;
+            storage.lpBalance -= msg.lpToBurn;
+            storage.save();
+
+            burnLp(lpWallet!, msg.lpToBurn, msg.to);
+            reportTo(poolCore!, 0, OP_HARVEST_YIELD, storage.principal, netYield);
+        }
+
+        HarvestYield => {
+            // pool-core's epoch-advance harvest. C6 can't price yield on-chain, so this is
+            // an ack reporting zero; the real harvest runs through HarvestStonfi (keeper).
+            var storage = lazy StonfiAdapterStorage.load();
+            val poolCore = storage.wired(ROLE_POOL_CORE);
+            assert (poolCore != null) throw ERR_NOT_CONFIGURED;
+            assert (in.senderAddress == poolCore!) throw ERR_UNAUTHORIZED;
+            reportTo(poolCore!, msg.queryId, OP_HARVEST_YIELD, storage.principal, 0);
+        }
+
+        ConfigureStonfiFee => {
+            var storage = lazy StonfiAdapterStorage.load();
+            assert (in.senderAddress == storage.adminAddress) throw ERR_UNAUTHORIZED;
+            storage.feeBps = msg.feeBps;
+            storage.save();
+        }
+
         ConfigureStonfiAdapter => {
             var storage = lazy StonfiAdapterStorage.load();
             assert (in.senderAddress == storage.adminAddress) throw ERR_UNAUTHORIZED;
@@ -212,12 +269,13 @@ fun onInternalMessage(in: InMessage) {
     }
 }
 
-get fun get_adapter_data(): (address, coins, coins, address?, address?, address?, address?, address?) {
+get fun get_adapter_data(): (address, coins, coins, address?, address?, address?, address?, address?, uint16) {
     val storage = lazy StonfiAdapterStorage.load();
     return (
         storage.adminAddress, storage.principal, storage.lpBalance,
         storage.wired(ROLE_POOL_CORE), storage.wired(ROLE_OWN_WALLET),
-        storage.wired(ROLE_ROUTER), storage.wired(ROLE_LP_WALLET), storage.wired(ROLE_STONFI_POOL)
+        storage.wired(ROLE_ROUTER), storage.wired(ROLE_LP_WALLET), storage.wired(ROLE_STONFI_POOL),
+        storage.feeBps
     );
 }
 
