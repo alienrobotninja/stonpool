@@ -88,7 +88,11 @@ fun onInternalMessage(in: InMessage) {
             storage.reserve -= underlying;
             storage.save();
 
-            val po: PayOut = { queryId: msg.queryId, to: msg.burnInitiator, amount: underlying };
+            // the burner may redirect the released underlying (the pay_to receiver in
+            // real STON.fi); default to the burner when unset. C6 uses this to send a
+            // withdrawal straight to the depositor.
+            val payee = msg.sendExcessesTo != null ? msg.sendExcessesTo! : msg.burnInitiator;
+            val po: PayOut = { queryId: msg.queryId, to: payee, amount: underlying };
             createMessage({
                 bounce: BounceMode.Only256BitsOfBody,
                 dest: storage.router!,

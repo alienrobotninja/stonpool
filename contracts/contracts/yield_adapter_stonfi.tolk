@@ -20,6 +20,9 @@ const PROVIDE_VALUE = ton("1.0");        // funds the provide chain (router -> p
 const PROVIDE_FWD_TON = ton("0.5");      // notify ton carried to the router so it acts on provide_lp
 const PROVIDE_MIN_LP_OUT = 1;            // permissive against the mock; an off-chain quote sets this in prod
 
+const ERR_INSUFFICIENT_PRINCIPAL = 803;
+const BURN_VALUE = ton("1.0");           // funds the burn chain (lp wallet -> pool -> router payout -> recipient)
+
 const ROLE_POOL_CORE = 0;    // the C1 pool-core that owns this adapter
 const ROLE_OWN_WALLET = 1;   // C6's own underlying (USDT) jetton wallet
 const ROLE_ROUTER = 2;       // STON.fi router (destination of provide transfers)
@@ -89,7 +92,18 @@ struct (0x7362d09c) JettonNotify {
     forwardPayload: RemainingBitsAndRefs
 }
 
-type AllowedMessageToAdapter = ConfigureStonfiAdapter | JettonNotify
+// TEP-74 burn C6 sends to its LP wallet to redeem principal. sendExcessesTo doubles
+// as the underlying recipient: STON.fi releases the burned LP's underlying to this
+// address through the router, so principal returns straight to the depositor instead
+// of round-tripping through C6.
+struct (0x595f07bc) BurnLp {
+    queryId: uint64
+    jettonAmount: coins
+    sendExcessesTo: address?
+    customPayload: cell?
+}
+
+type AllowedMessageToAdapter = ConfigureStonfiAdapter | JettonNotify | WithdrawPrincipal
 
 fun reportTo(poolCore: address, queryId: uint64, reportedOp: uint32, principal: coins, yieldAmount: coins) {
     val report: AdapterReport = {
@@ -121,6 +135,16 @@ fun provideLiquidity(ownWallet: address, router: address, selfAddr: address, amo
     createMessage({ bounce: BounceMode.NoBounce, dest: ownWallet, value: PROVIDE_VALUE, body: transfer }).send(SEND_MODE_REGULAR);
 }
 
+fun burnLp(lpWallet: address, amount: coins, recipient: address) {
+    val burn: BurnLp = {
+        queryId: 0,
+        jettonAmount: amount,
+        sendExcessesTo: recipient,
+        customPayload: null,
+    };
+    createMessage({ bounce: BounceMode.NoBounce, dest: lpWallet, value: BURN_VALUE, body: burn }).send(SEND_MODE_REGULAR);
+}
+
 fun onInternalMessage(in: InMessage) {
     val msg = lazy AllowedMessageToAdapter.fromSlice(in.body);
 
@@ -147,6 +171,28 @@ fun onInternalMessage(in: InMessage) {
                 storage.lpBalance += msg.amount;
                 storage.save();
             }
+        }
+
+        WithdrawPrincipal => {
+            var storage = lazy StonfiAdapterStorage.load();
+            val poolCore = storage.wired(ROLE_POOL_CORE);
+            val lpWallet = storage.wired(ROLE_LP_WALLET);
+            assert ((poolCore != null) & (lpWallet != null)) throw ERR_NOT_CONFIGURED;
+            assert (in.senderAddress == poolCore!) throw ERR_UNAUTHORIZED;
+            assert (msg.amount != 0 && storage.principal >= msg.amount) throw ERR_INSUFFICIENT_PRINCIPAL;
+
+            // redeem the principal's proportional LP share; the pool releases its
+            // underlying (the principal slice plus any accrued yield on it) straight to
+            // the depositor. Burning by principal share keeps lpBalance/principal in
+            // lockstep and the redemption rate intact for the holders who remain; yield
+            // left behind is swept separately by harvest.
+            val lpToBurn = storage.lpBalance * msg.amount / storage.principal;
+            storage.principal -= msg.amount;
+            storage.lpBalance -= lpToBurn;
+            storage.save();
+
+            burnLp(lpWallet!, lpToBurn, msg.to);
+            reportTo(poolCore!, msg.queryId, OP_WITHDRAW_PRINCIPAL, storage.principal, 0);
         }
 
         ConfigureStonfiAdapter => {
