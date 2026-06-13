@@ -1,6 +1,6 @@
 import base64
 
-from pytoniq_core import Address, begin_cell
+from pytoniq_core import Address, Cell, begin_cell
 
 A1 = "0:" + "cd" * 32
 A2 = "0:" + "11" * 32
@@ -59,3 +59,25 @@ class FakeChainClient:
 
     async def get_transactions(self, address, *, after_lt=0, limit=50):
         return [t for t in self.by_account.get(address, []) if int(t["lt"]) > after_lt]
+
+
+class FakeGetMethodClient:
+    # methods: no-arg get-methods -> decoded stack list.
+    # balances: depositor raw address -> (weight, join_epoch); the address arg is decoded
+    # from the stack slice, exercising the real arg encoding.
+    def __init__(
+        self, methods: dict[str, list], balances: dict[str, tuple[int, int]] | None = None
+    ):
+        self.methods = methods
+        self.balances = balances or {}
+
+    async def run_get_method(self, address, method, stack=None):
+        if method == "get_balance_of":
+            cell = Cell.one_from_boc(base64.b64decode(stack[0]["value"]))
+            addr = cell.begin_parse().load_address().to_str(is_user_friendly=False)
+            weight, join_epoch = self.balances[addr]
+            return [weight, join_epoch]
+        return self.methods[method]
+
+    async def get_transactions(self, address, *, after_lt=0, limit=50):
+        return []

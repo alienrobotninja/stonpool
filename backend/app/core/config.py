@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     db_echo: bool = False
     db_pool_size: int = 5
 
+    min_hold_epochs: int = 1  # epochs a deposit must age before it is draw-eligible
+
     @property
     def is_mainnet(self) -> bool:
         return self.env == "mainnet"

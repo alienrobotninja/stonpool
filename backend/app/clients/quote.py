@@ -17,6 +17,14 @@ class AdapterState:
 
 
 @dataclass(frozen=True)
+class PoolData:
+    epoch: int
+    deposit_deadline: int
+    total_principal: int
+    prize_pot: int
+
+
+@dataclass(frozen=True)
 class HarvestPlan:
     lp_to_burn: int
     gross_yield: int  # underlying the burn actually releases (keeper sends this to C6)
