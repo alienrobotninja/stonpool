@@ -4,5 +4,6 @@ fastapi>=0.111
 httpx>=0.27
 pydantic>=2.7
 pydantic-settings>=2.3
+pytoniq-core>=0.1.40
 sqlalchemy[asyncio]>=2.0.30
 uvicorn[standard]>=0.30
