@@ -16,6 +16,7 @@ from app.clients.sources import (
     read_adapter_state,
     read_balance_of,
     read_pool_data,
+    read_preview_winner,
 )
 
 __all__ = [
@@ -36,4 +37,5 @@ __all__ = [
     "read_adapter_state",
     "read_balance_of",
     "read_pool_data",
+    "read_preview_winner",
 ]

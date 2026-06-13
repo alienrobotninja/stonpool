@@ -41,6 +41,8 @@ class KeeperState:
     quote: LpQuote
     commit_hash: int | None = None  # required at COMMIT
     reveal_secret: int | None = None  # required at REVEAL
+    prize_pot: int = 0  # pot at settle; drives skim/distributable when recording the draw
+    now: int = 0  # wall clock stamped onto the recorded draw and payouts
     min_yield: int = 1  # dust floor below which a harvest is skipped
 
 
@@ -81,5 +83,5 @@ def plan(state: KeeperState, cfg: Settings) -> list[Action]:
             )
         ]
     if p is Phase.SETTLE:
-        return [Action("settle", cfg.draw_engine_address, build_settle_draw(), VALUE_SETTLE)]
+        return [Action("settle", cfg.pool_core_address, build_settle_draw(), VALUE_SETTLE)]
     return []  # ACCRUING, SETTLED

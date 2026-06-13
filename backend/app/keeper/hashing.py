@@ -11,3 +11,9 @@ def commit_hash(secret: int) -> int:
 def mix_seed(seed: int, secret: int) -> int:
     cell = begin_cell().store_uint(seed, 256).store_uint(secret, 256).end_cell()
     return int.from_bytes(cell.hash, "big")
+
+
+def tier_word(seed: int, tier: int) -> int:
+    # per-tier draw word: h256(seed || tier:uint32), verified byte-equal against @ton/core.
+    cell = begin_cell().store_uint(seed, 256).store_uint(tier, 32).end_cell()
+    return int.from_bytes(cell.hash, "big")

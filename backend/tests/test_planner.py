@@ -45,7 +45,7 @@ def test_idle_phases_emit_nothing(phase):
     "phase,kind,to,op,value",
     [
         (Phase.ADVANCE, "advance", POOL, 0x10000004, VALUE_ADVANCE),
-        (Phase.SETTLE, "settle", DE, 0x10000016, VALUE_SETTLE),
+        (Phase.SETTLE, "settle", POOL, 0x10000016, VALUE_SETTLE),
     ],
 )
 def test_simple_actions(phase, kind, to, op, value):

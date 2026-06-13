@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     db_pool_size: int = 5
 
     min_hold_epochs: int = 1  # epochs a deposit must age before it is draw-eligible
+    skim_bps: int = 1000  # admin cut of the pot at settle (matches on-chain config)
+    prize_tiers: int = 3
 
     @property
     def is_mainnet(self) -> bool:
