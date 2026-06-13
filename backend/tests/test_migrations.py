@@ -1,8 +1,9 @@
 import sqlite3
 from pathlib import Path
 
-from alembic import command
 from alembic.config import Config
+
+from alembic import command
 
 ROOT = Path(__file__).resolve().parents[1]
 TABLES = {

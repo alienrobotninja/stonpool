@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 import app.db.session as session_mod
+import app.models  # noqa: F401  registers all tables on Base.metadata
 from app.db.base import Base
 
 
