@@ -32,3 +32,21 @@ async def sm(engine, monkeypatch):
 async def db(sm):
     async with sm() as s:
         yield s
+
+
+@pytest_asyncio.fixture
+async def client(db):
+    import httpx
+
+    from app.api.app import create_app
+    from app.db.session import get_db
+
+    app = create_app()
+
+    async def _use_test_db():
+        yield db
+
+    app.dependency_overrides[get_db] = _use_test_db
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c

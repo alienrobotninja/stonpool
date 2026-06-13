@@ -67,6 +67,12 @@ class ToncenterClient:
         r.raise_for_status()
         return r.json().get("transactions", [])
 
+    async def send_boc(self, boc_b64: str) -> str:
+        c = await self._http()
+        r = await c.post("/message", json={"boc": boc_b64}, headers=self._headers())
+        r.raise_for_status()
+        return r.json().get("message_hash", "")
+
     async def aclose(self):
         if self._client is not None:
             await self._client.aclose()

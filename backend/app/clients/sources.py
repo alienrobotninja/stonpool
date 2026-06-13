@@ -1,7 +1,7 @@
 import base64
 from typing import Protocol
 
-from pytoniq_core import Address, begin_cell
+from pytoniq_core import Address, Cell, begin_cell
 
 from app.clients.chain import ChainClient
 from app.clients.quote import AdapterState, LpQuote, PoolData
@@ -49,6 +49,22 @@ async def read_balance_of(client: ChainClient, pool_address: str, addr: str) -> 
     # get_balance_of(addr) -> (weight, join_epoch)
     st = await client.run_get_method(pool_address, "get_balance_of", [_addr_arg(addr)])
     return int(st[0]), int(st[1])
+
+
+def _decode_addr_result(item) -> str:
+    # an address get-method result arrives as a raw slice/cell stack item; nums are already
+    # ints (decode_stack), so anything else here is the boc-wrapped address.
+    if isinstance(item, str):
+        return item
+    boc = base64.b64decode(item["value"])
+    return Cell.one_from_boc(boc).begin_parse().load_address().to_str(is_user_friendly=False)
+
+
+async def read_preview_winner(client: ChainClient, pool_address: str, word: int) -> str:
+    st = await client.run_get_method(
+        pool_address, "preview_winner", [{"type": "num", "value": hex(word)}]
+    )
+    return _decode_addr_result(st[0])
 
 
 def build_quote_source(client: ChainClient, cfg: Settings | None = None) -> QuoteSource:

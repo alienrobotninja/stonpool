@@ -58,6 +58,19 @@ class StateRepo:
         q = select(func.coalesce(func.sum(DepositorPosition.principal), 0))
         return (await self.db.execute(q)).scalar_one()
 
+    async def eligible_total(self) -> int:
+        q = select(func.coalesce(func.sum(DepositorPosition.principal), 0)).where(
+            DepositorPosition.eligible.is_(True)
+        )
+        return (await self.db.execute(q)).scalar_one()
+
+    async def list_draws(self, limit: int = 50) -> list[Draw]:
+        q = select(Draw).order_by(Draw.epoch.desc()).limit(limit)
+        return list((await self.db.execute(q)).scalars())
+
+    async def get_draw(self, epoch: int) -> Draw | None:
+        return await self.db.get(Draw, epoch)
+
     async def upsert_epoch(
         self,
         *,
@@ -116,6 +129,17 @@ class StateRepo:
     async def latest_snapshot(self) -> PoolSnapshot | None:
         q = select(PoolSnapshot).order_by(PoolSnapshot.id.desc()).limit(1)
         return (await self.db.execute(q)).scalar_one_or_none()
+
+    async def list_snapshots(self, limit: int = 50) -> list[PoolSnapshot]:
+        q = select(PoolSnapshot).order_by(PoolSnapshot.id.desc()).limit(limit)
+        return list((await self.db.execute(q)).scalars())
+
+    async def list_epochs(self, limit: int = 50) -> list[Epoch]:
+        q = select(Epoch).order_by(Epoch.epoch.desc()).limit(limit)
+        return list((await self.db.execute(q)).scalars())
+
+    async def get_epoch(self, epoch: int) -> Epoch | None:
+        return await self.db.get(Epoch, epoch)
 
     async def get_cursor(self, account) -> IndexerCursor | None:
         return await self.db.get(IndexerCursor, account)

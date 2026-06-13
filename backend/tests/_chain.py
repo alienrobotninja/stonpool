@@ -66,10 +66,14 @@ class FakeGetMethodClient:
     # balances: depositor raw address -> (weight, join_epoch); the address arg is decoded
     # from the stack slice, exercising the real arg encoding.
     def __init__(
-        self, methods: dict[str, list], balances: dict[str, tuple[int, int]] | None = None
+        self,
+        methods: dict[str, list],
+        balances: dict[str, tuple[int, int]] | None = None,
+        preview_winners: list[str] | None = None,
     ):
         self.methods = methods
         self.balances = balances or {}
+        self._winners = list(preview_winners or [])
 
     async def run_get_method(self, address, method, stack=None):
         if method == "get_balance_of":
@@ -77,6 +81,8 @@ class FakeGetMethodClient:
             addr = cell.begin_parse().load_address().to_str(is_user_friendly=False)
             weight, join_epoch = self.balances[addr]
             return [weight, join_epoch]
+        if method == "preview_winner":
+            return [self._winners.pop(0)]
         return self.methods[method]
 
     async def get_transactions(self, address, *, after_lt=0, limit=50):

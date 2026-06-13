@@ -109,3 +109,57 @@ async def test_snapshot_latest_and_cursor(db):
     await db.commit()
     cur = await repo.get_cursor("0:pool")
     assert cur.last_lt == 20 and cur.last_hash == "x" * 64
+
+
+async def test_state_read_methods(db):
+    repo = StateRepo(db)
+    base = dict(
+        deposit_deadline=1,
+        total_principal=0,
+        prize_pot=0,
+        adapter_principal=0,
+        adapter_lp_balance=0,
+        stonfi_reserve=0,
+        stonfi_lp_supply=0,
+        accrued_yield=0,
+    )
+    await repo.add_snapshot(epoch=5, **base)
+    await repo.add_snapshot(epoch=6, **base)
+    await repo.upsert_epoch(epoch=5, prize_pot=2500)
+    await repo.upsert_epoch(epoch=6, prize_pot=0)
+    await repo.upsert_position(address="0:a", principal=6000, eligible=True)
+    await repo.upsert_position(address="0:b", principal=4000, eligible=True)
+    await repo.upsert_position(address="0:c", principal=900, eligible=False)
+    await repo.upsert_draw(epoch=5, distributable=2250, skim=250, num_winners=1)
+    await repo.upsert_draw(epoch=6, distributable=0)
+    await db.commit()
+
+    assert [s.epoch for s in await repo.list_snapshots(limit=1)] == [6]
+    assert [e.epoch for e in await repo.list_epochs()] == [6, 5]
+    assert (await repo.get_epoch(5)).prize_pot == 2500
+    assert await repo.get_epoch(99) is None
+    assert await repo.eligible_total() == 10000
+    assert [d.epoch for d in await repo.list_draws()] == [6, 5]
+    assert (await repo.get_draw(5)).distributable == 2250
+    assert await repo.get_draw(99) is None
+
+
+async def test_event_recent_readers(db):
+    repo = EventRepo(db)
+    await repo.add_withdrawal(tx_hash="w1" + "0" * 62, lt=30, ts=3, depositor="0:d", amount=500)
+    await repo.add_withdrawal(tx_hash="w2" + "0" * 62, lt=10, ts=1, depositor="0:d", amount=100)
+    await repo.add_harvest(
+        tx_hash="h1" + "0" * 62, lt=20, ts=2, gross_yield=2500, net_yield=2475, lp_burned=2000
+    )
+    await repo.add_payout(
+        tx_hash="p1" + "0" * 62, lt=40, ts=4, winner="0:w", amount=750, tier=0, epoch=5
+    )
+    await repo.add_payout(
+        tx_hash="p2" + "0" * 62, lt=41, ts=4, winner="0:x", amount=750, tier=1, epoch=5
+    )
+    await db.commit()
+
+    assert [w.lt for w in await repo.recent_withdrawals()] == [30, 10]
+    assert len(await repo.recent_harvests()) == 1
+    assert [p.lt for p in await repo.recent_payouts()] == [41, 40]
+    assert [p.tier for p in await repo.payouts_for_epoch(5)] == [0, 1]
