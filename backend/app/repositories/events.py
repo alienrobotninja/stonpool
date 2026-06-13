@@ -70,6 +70,14 @@ class EventRepo:
         q = select(Withdrawal).order_by(Withdrawal.lt.desc()).limit(limit)
         return list((await self.db.execute(q)).scalars())
 
+    async def recent_harvests(self, limit: int = 50) -> list[Harvest]:
+        q = select(Harvest).order_by(Harvest.lt.desc()).limit(limit)
+        return list((await self.db.execute(q)).scalars())
+
+    async def recent_payouts(self, limit: int = 50) -> list[Payout]:
+        q = select(Payout).order_by(Payout.lt.desc()).limit(limit)
+        return list((await self.db.execute(q)).scalars())
+
     async def payouts_for_epoch(self, epoch: int) -> list[Payout]:
         q = select(Payout).where(Payout.epoch == epoch).order_by(Payout.tier)
         return list((await self.db.execute(q)).scalars())

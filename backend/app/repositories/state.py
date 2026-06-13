@@ -58,6 +58,19 @@ class StateRepo:
         q = select(func.coalesce(func.sum(DepositorPosition.principal), 0))
         return (await self.db.execute(q)).scalar_one()
 
+    async def eligible_total(self) -> int:
+        q = select(func.coalesce(func.sum(DepositorPosition.principal), 0)).where(
+            DepositorPosition.eligible.is_(True)
+        )
+        return (await self.db.execute(q)).scalar_one()
+
+    async def list_draws(self, limit: int = 50) -> list[Draw]:
+        q = select(Draw).order_by(Draw.epoch.desc()).limit(limit)
+        return list((await self.db.execute(q)).scalars())
+
+    async def get_draw(self, epoch: int) -> Draw | None:
+        return await self.db.get(Draw, epoch)
+
     async def upsert_epoch(
         self,
         *,
