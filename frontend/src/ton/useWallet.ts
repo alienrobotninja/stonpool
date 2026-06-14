@@ -1,0 +1,22 @@
+import { useTonAddress, useTonConnectUI } from "@tonconnect/ui-react";
+
+export interface Wallet {
+  address: string; // user-friendly, "" when disconnected
+  rawAddress: string; // raw 0:hex, "" when disconnected
+  connected: boolean;
+  connect: () => void;
+  disconnect: () => Promise<void>;
+}
+
+export function useWallet(): Wallet {
+  const friendly = useTonAddress(true);
+  const raw = useTonAddress(false);
+  const [tonConnectUI] = useTonConnectUI();
+  return {
+    address: friendly,
+    rawAddress: raw,
+    connected: Boolean(friendly),
+    connect: () => tonConnectUI.openModal(),
+    disconnect: () => tonConnectUI.disconnect(),
+  };
+}
