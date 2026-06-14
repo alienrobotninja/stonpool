@@ -1,6 +1,14 @@
 import { config } from "../config";
 
-import type { ActivityEvent, Draw, Epoch, Health, Position, Snapshot } from "./types";
+import type {
+  ActivityEvent,
+  Draw,
+  Epoch,
+  Health,
+  Position,
+  Snapshot,
+  WalletBalance,
+} from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -33,6 +41,7 @@ export interface ApiClient {
   getEvents(limit?: number): Promise<ActivityEvent[]>;
   getDraws(limit?: number): Promise<Draw[]>;
   getDraw(epoch: number): Promise<Draw>;
+  getWalletBalance(address: string): Promise<WalletBalance>;
 }
 
 export function createApiClient(baseUrl = config.apiBaseUrl, fetchFn: FetchFn = fetch): ApiClient {
@@ -65,6 +74,7 @@ export function createApiClient(baseUrl = config.apiBaseUrl, fetchFn: FetchFn = 
     getEvents: (limit) => request<ActivityEvent[]>(`/events${qs({ limit })}`),
     getDraws: (limit) => request<Draw[]>(`/draws${qs({ limit })}`),
     getDraw: (epoch) => request<Draw>(`/draws/${epoch}`),
+    getWalletBalance: (address) => request<WalletBalance>(`/wallet/${address}`),
   };
 }
 

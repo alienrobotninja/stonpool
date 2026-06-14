@@ -70,3 +70,9 @@ export interface Draw {
   settled_ts: number | null;
   payouts: Payout[];
 }
+
+export interface WalletBalance {
+  owner: string;
+  jetton_wallet: string;
+  balance: number;
+}

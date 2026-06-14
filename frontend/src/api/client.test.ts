@@ -64,3 +64,12 @@ test("getDraw fetches by epoch and parses payouts", async () => {
   expect(d.payouts[0].winner).toBe("0:abc");
   expect(f).toHaveBeenCalledWith("http://api/draws/5");
 });
+
+test("getWalletBalance fetches by address", async () => {
+  const f = mockFetch(200, { owner: "0:11", jetton_wallet: "0:22", balance: 12345 });
+  const api = createApiClient("http://api", f);
+  const b = await api.getWalletBalance("0:11");
+  expect(b.balance).toBe(12345);
+  expect(b.jetton_wallet).toBe("0:22");
+  expect(f).toHaveBeenCalledWith("http://api/wallet/0:11");
+});
