@@ -70,10 +70,12 @@ class FakeGetMethodClient:
         methods: dict[str, list],
         balances: dict[str, tuple[int, int]] | None = None,
         preview_winners: list[str] | None = None,
+        wallet_address: str | None = None,
     ):
         self.methods = methods
         self.balances = balances or {}
         self._winners = list(preview_winners or [])
+        self.wallet_address = wallet_address
 
     async def run_get_method(self, address, method, stack=None):
         if method == "get_balance_of":
@@ -83,6 +85,9 @@ class FakeGetMethodClient:
             return [weight, join_epoch]
         if method == "preview_winner":
             return [self._winners.pop(0)]
+        if method == "get_wallet_address":
+            boc = begin_cell().store_address(Address(self.wallet_address)).end_cell().to_boc()
+            return [{"type": "slice", "value": base64.b64encode(boc).decode()}]
         return self.methods[method]
 
     async def get_transactions(self, address, *, after_lt=0, limit=50):

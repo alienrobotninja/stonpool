@@ -15,6 +15,7 @@ from app.clients.sources import (
     build_quote_source,
     read_adapter_state,
     read_balance_of,
+    read_jetton_balance,
     read_pool_data,
     read_preview_winner,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "net_of_fee",
     "read_adapter_state",
     "read_balance_of",
+    "read_jetton_balance",
     "read_pool_data",
     "read_preview_winner",
 ]

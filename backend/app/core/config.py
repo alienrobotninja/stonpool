@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     stonfi_router_address: str = ""
     vault_address: str = ""
     draw_engine_address: str = ""
+    jetton_master_address: str = ""  # jUSDT minter; used to derive owners' jetton wallets
 
     db_echo: bool = False
     db_pool_size: int = 5
