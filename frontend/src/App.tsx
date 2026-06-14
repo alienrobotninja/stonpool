@@ -1,3 +1,4 @@
+import { FaucetCard } from "./components/FaucetCard";
 import { WalletButton } from "./components/WalletButton";
 import { TonProvider } from "./ton/provider";
 
@@ -23,6 +24,10 @@ export default function App() {
             Keep your principal. The pooled yield earns on STON.fi and funds a verifiable
             on-chain draw every epoch.
           </p>
+
+          <div className="mt-10 max-w-sm">
+            <FaucetCard />
+          </div>
         </main>
       </div>
     </TonProvider>
