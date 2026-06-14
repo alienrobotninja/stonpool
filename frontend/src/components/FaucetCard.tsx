@@ -8,7 +8,7 @@ const CLAIM_VALUE = "300000000"; // 0.3 TON covers the faucet's two mint sends
 
 type Status = "idle" | "pending" | "sent" | "error";
 
-export function FaucetCard() {
+export function FaucetCard({ onClaimed }: { onClaimed?: () => void }) {
   const { connected, send } = useWallet();
   const [status, setStatus] = useState<Status>("idle");
 
@@ -19,6 +19,7 @@ export function FaucetCard() {
         { address: config.addresses.faucet, amount: CLAIM_VALUE, payload: buildFaucetClaim() },
       ]);
       setStatus("sent");
+      onClaimed?.();
     } catch {
       setStatus("error");
     }
