@@ -25,3 +25,7 @@ export function parseAmount(input: string, decimals = 6): bigint {
   const fracPadded = (frac + "0".repeat(decimals)).slice(0, decimals);
   return BigInt(whole) * 10n ** BigInt(decimals) + BigInt(fracPadded || "0");
 }
+
+export function shortAddress(addr: string, head = 6, tail = 4): string {
+  return addr.length > head + tail + 1 ? `${addr.slice(0, head)}\u2026${addr.slice(-tail)}` : addr;
+}

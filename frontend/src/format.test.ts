@@ -1,4 +1,4 @@
-import { formatAmount, formatCountdown, parseAmount } from "./format";
+import { formatAmount, formatCountdown, parseAmount, shortAddress } from "./format";
 
 test("formats base units to token amounts", () => {
   expect(formatAmount(5_000_000)).toBe("5");
@@ -25,4 +25,10 @@ test("parseAmount rejects malformed input", () => {
   expect(() => parseAmount("abc")).toThrow();
   expect(() => parseAmount("1.2.3")).toThrow();
   expect(() => parseAmount("")).toThrow();
+});
+
+test("shortAddress truncates long addresses", () => {
+  const raw = "0:" + "ab".repeat(32);
+  expect(shortAddress(raw)).toBe("0:abab\u2026abab");
+  expect(shortAddress("short")).toBe("short");
 });
