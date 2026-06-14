@@ -75,3 +75,9 @@ class DrawOut(BaseModel):
     num_winners: int
     settled_ts: int | None
     payouts: list[PayoutOut] = []
+
+
+class WalletBalanceOut(BaseModel):
+    owner: str
+    jetton_wallet: str
+    balance: int

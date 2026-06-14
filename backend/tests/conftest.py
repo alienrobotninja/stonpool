@@ -35,18 +35,23 @@ async def db(sm):
 
 
 @pytest_asyncio.fixture
-async def client(db):
-    import httpx
-
+async def app(db):
     from app.api.app import create_app
     from app.db.session import get_db
 
-    app = create_app()
+    application = create_app()
 
     async def _use_test_db():
         yield db
 
-    app.dependency_overrides[get_db] = _use_test_db
+    application.dependency_overrides[get_db] = _use_test_db
+    return application
+
+
+@pytest_asyncio.fixture
+async def client(app):
+    import httpx
+
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c

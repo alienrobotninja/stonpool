@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import draws, epochs, events, health, pool, positions
+from app.api.routes import draws, epochs, events, health, pool, positions, wallet
 from app.db.session import init_engine
 
 
@@ -29,4 +29,5 @@ def create_app() -> FastAPI:
     app.include_router(positions.router)
     app.include_router(events.router)
     app.include_router(draws.router)
+    app.include_router(wallet.router)
     return app

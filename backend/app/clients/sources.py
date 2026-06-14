@@ -67,6 +67,19 @@ async def read_preview_winner(client: ChainClient, pool_address: str, word: int)
     return _decode_addr_result(st[0])
 
 
+async def read_jetton_balance(client: ChainClient, minter: str, owner: str) -> tuple[str, int]:
+    # minter.get_wallet_address(owner) is deterministic even before the wallet is deployed;
+    # get_wallet_data only exists once it is, so a missing wallet reads as a zero balance.
+    st = await client.run_get_method(minter, "get_wallet_address", [_addr_arg(owner)])
+    wallet = _decode_addr_result(st[0])
+    try:
+        data = await client.run_get_method(wallet, "get_wallet_data")
+        balance = int(data[0])
+    except Exception:
+        balance = 0
+    return wallet, balance
+
+
 def build_quote_source(client: ChainClient, cfg: Settings | None = None) -> QuoteSource:
     cfg = cfg or get_settings()
     if cfg.is_mainnet:
