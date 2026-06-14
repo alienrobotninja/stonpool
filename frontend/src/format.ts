@@ -15,3 +15,13 @@ export function formatCountdown(deadlineSec: number, nowSec: number): string {
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
 }
+
+// parse a decimal token string ("10.5") into integer base units, via string math to avoid
+// float precision loss. throws on malformed input.
+export function parseAmount(input: string, decimals = 6): bigint {
+  const t = input.trim();
+  if (!/^\d+(\.\d+)?$/.test(t)) throw new Error("invalid amount");
+  const [whole, frac = ""] = t.split(".");
+  const fracPadded = (frac + "0".repeat(decimals)).slice(0, decimals);
+  return BigInt(whole) * 10n ** BigInt(decimals) + BigInt(fracPadded || "0");
+}
