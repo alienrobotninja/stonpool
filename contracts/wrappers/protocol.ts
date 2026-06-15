@@ -34,6 +34,7 @@ export const OP = {
   CFG_ROUTER: 0x7e571001,
   CFG_POOL: 0x7e571002,
   ACCRUE: 0x7e571004,
+  SIMULATE_LOSS: 0x7e571005,
 } as const;
 
 export type PoolConfig = {

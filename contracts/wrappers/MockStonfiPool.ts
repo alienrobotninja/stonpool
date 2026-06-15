@@ -34,6 +34,14 @@ export class MockStonfiPool implements Contract {
     });
   }
 
+  // test-only: shrinks the reserve to model a depeg; LP redeems for proportionally less
+  async sendSimulateLoss(provider: ContractProvider, via: Sender, amount: bigint) {
+    await provider.internal(via, {
+      value: toNano('0.1'),
+      body: beginCell().storeUint(OP.SIMULATE_LOSS, 32).storeUint(0, 64).storeCoins(amount).endCell(),
+    });
+  }
+
   async getPoolData(provider: ContractProvider) {
     const s = (await provider.get('get_pool_data', [])).stack;
     s.readAddress(); s.readAddressOpt();
