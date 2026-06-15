@@ -19,6 +19,8 @@ export const SROLE = {
 } as const;
 
 export const OP = {
+  TRANSFER: 0x0f8a7ea5, // TEP-74 jetton transfer (AskToTransfer)
+  FAUCET_REQUEST: 0x10000052,
   DEPOSIT: 0x10000001,
   REQUEST_WITHDRAW: 0x10000002,
   ADVANCE_EPOCH: 0x10000004,
