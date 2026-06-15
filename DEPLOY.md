@@ -116,16 +116,37 @@ automatically. Confirm `https://<origin>/tonconnect-manifest.json` and `/icon-18
 ## 10. Docker path (off-chain services)
 
 The on-chain steps (1-3, 7-8) always run via Blueprint. The backend API, keeper, Postgres, and the
-static frontend can run via Compose instead of sections 5-6 and 9:
+static frontend run via Compose, replacing sections 5-6 and 9. `docker-compose.yml` defines five
+services: `db` (Postgres), `migrate` (one-shot `alembic upgrade head`), `api` (:8000), `keeper`, and
+`frontend` (:8080).
+
+Fill `backend/.env` as in step 4 (the compose file overrides `STONPOOL_DATABASE_URL` to point at the
+`db` service, so leave that one as-is). The frontend image inlines its config at build time, so put
+the `VITE_*` values in a repo-root `.env` that Compose reads for build-arg interpolation:
 
 ```
-cp backend/.env.example backend/.env     # fill in as per step 4
+# ./.env (root), consumed by docker compose for the frontend build args
+VITE_APP_URL=http://localhost:8080
+VITE_API_BASE_URL=http://localhost:8000
+VITE_POOL_CORE_ADDRESS=<pool_core>
+VITE_FAUCET_ADDRESS=<faucet>
+```
+
+Then:
+
+```
 docker compose up -d --build
 ```
 
-This brings up Postgres, runs migrations, serves the API on :8000, starts the keeper, and serves the
-built frontend on :8080. Set the `VITE_*` build args in `docker-compose.yml` (or an `.env` next to it)
-before building the frontend image. See the compose file for the per-service knobs.
+This starts Postgres, runs migrations to completion, serves the API on `:8000`, starts the keeper,
+and serves the built frontend on `:8080`. The frontend build fails fast if the required `VITE_*`
+addresses are unset (the env guard) - that is intentional, not a bug.
+
+Keeper live mode: the `keeper` image is built with `INSTALL_KEEPER=true`, so `pytoniq` is present and
+the keeper can broadcast. It still dry-runs (records, no broadcast) until `STONPOOL_OPERATOR_MNEMONIC`
+is set in `backend/.env`. Validate `app/keeper/wallet_sender.py` against the installed `pytoniq`
+version before relying on live broadcasts - that signing path is wired here but not exercised by the
+test suite.
 
 ## CI
 

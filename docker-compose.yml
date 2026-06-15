@@ -1,0 +1,65 @@
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: stonpool
+      POSTGRES_PASSWORD: stonpool
+      POSTGRES_DB: stonpool
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stonpool"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build: ./backend
+    command: ["alembic", "upgrade", "head"]
+    env_file: [backend/.env]
+    environment:
+      STONPOOL_DATABASE_URL: postgresql+asyncpg://stonpool:stonpool@db:5432/stonpool
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build: ./backend
+    env_file: [backend/.env]
+    environment:
+      STONPOOL_DATABASE_URL: postgresql+asyncpg://stonpool:stonpool@db:5432/stonpool
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  keeper:
+    build:
+      context: ./backend
+      args:
+        INSTALL_KEEPER: "true"
+    command: ["python", "-m", "app.keeper"]
+    env_file: [backend/.env]
+    environment:
+      STONPOOL_DATABASE_URL: postgresql+asyncpg://stonpool:stonpool@db:5432/stonpool
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_APP_URL: ${VITE_APP_URL:-http://localhost:8080}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+        VITE_NETWORK: ${VITE_NETWORK:-testnet}
+        VITE_POOL_CORE_ADDRESS: ${VITE_POOL_CORE_ADDRESS:-}
+        VITE_FAUCET_ADDRESS: ${VITE_FAUCET_ADDRESS:-}
+        VITE_JETTON_MINTER_ADDRESS: ${VITE_JETTON_MINTER_ADDRESS:-}
+        VITE_ADAPTER_ADDRESS: ${VITE_ADAPTER_ADDRESS:-}
+    ports:
+      - "8080:80"
+
+volumes:
+  pgdata:
