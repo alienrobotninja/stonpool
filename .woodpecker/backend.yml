@@ -1,0 +1,11 @@
+when:
+  - event: [push, pull_request]
+
+steps:
+  test:
+    image: python:3.12-slim
+    commands:
+      - cd backend
+      - pip install --no-cache-dir -r requirements.txt -r requirements-dev.txt
+      - ruff check app tests
+      - pytest -q

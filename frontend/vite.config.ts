@@ -18,14 +18,14 @@ function stonpoolBuild(mode: string): Plugin {
       outDir = c.build.outDir;
     },
     buildStart() {
-      const env = loadEnv(mode, process.cwd(), "VITE_");
+      const env = { ...loadEnv(mode, process.cwd(), "VITE_"), ...process.env };
       const missing = missingEnv(env);
       if (missing.length) {
         throw new Error(`production build missing required env: ${missing.join(", ")}`);
       }
     },
     closeBundle() {
-      const appUrl = loadEnv(mode, process.cwd(), "VITE_").VITE_APP_URL;
+      const appUrl = { ...loadEnv(mode, process.cwd(), "VITE_"), ...process.env }.VITE_APP_URL;
       if (!appUrl) {
         this.warn("VITE_APP_URL unset: shipping the placeholder tonconnect manifest");
         return;

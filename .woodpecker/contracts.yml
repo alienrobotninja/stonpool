@@ -1,0 +1,11 @@
+when:
+  - event: [push, pull_request]
+
+steps:
+  test:
+    image: node:24
+    commands:
+      - cd contracts
+      - npm install --no-audit --no-fund
+      - npx blueprint build --all
+      - npx jest --ci

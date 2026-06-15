@@ -1,0 +1,19 @@
+when:
+  - event: [push, pull_request]
+
+steps:
+  test:
+    image: node:24
+    environment:
+      # placeholder config so the production build's env guard passes; real values are set at deploy
+      VITE_API_BASE_URL: https://api.example.invalid
+      VITE_POOL_CORE_ADDRESS: "0:0000000000000000000000000000000000000000000000000000000000000000"
+      VITE_FAUCET_ADDRESS: "0:0000000000000000000000000000000000000000000000000000000000000000"
+    commands:
+      - cd frontend
+      - npm ci
+      - npm run lint
+      - npm run typecheck
+      - npm run test
+      - npm run audit
+      - npm run build

@@ -2,13 +2,11 @@
 
 Automated, trustless, no-loss prize pool on TON, built on STON.fi. Depositors keep their principal; pooled principal earns yield through a STON.fi stable pool (USDT/USDC, USDT/USDe fallback), and each epoch the accrued yield is awarded to a depositor selected by a verifiable on-chain draw. No depositor can lose principal outside a stablecoin depeg event, which is socialized and disclosed.
 
-Submission target: STON.fi grant program.
-
 ## Stack
 
 - On-chain: Tolk (TVM), Blueprint toolchain, `@ton/sandbox` for tests.
 - Backend: Python 3.12 / FastAPI, Postgres, Alembic.
-- Frontend: TypeScript / React / Vite, TON Connect, `@ston-fi/sdk` + `@ston-fi/api`.
+- Frontend: TypeScript / React / Vite, TON Connect; live pool data from the backend API.
 - CI: Codeberg (Woodpecker).
 
 ## Module map
@@ -28,16 +26,16 @@ Mock infra: custom Jetton masters (mock USDT/USDC) + on-chain faucet.
 
 Backend (FastAPI):
 - `B0 persistence` Postgres models + migrations.
-- `B1 stonfi-client` read wrapper over api.ston.fi.
+- `B1 quote-source` LP reserve/supply reads; testnet reads the deployed mock STON.fi pool on-chain (api.ston.fi is mainnet-only).
 - `B2 indexer` chain tail, opcode decode, read model.
-- `B3 scheduler` permissionless epoch poker (advance/commit/reveal/draw).
+- `B3 keeper` permissionless epoch poker (advance/commit/reveal/draw); runs as `python -m app.keeper`.
 - `B4 api` REST for the frontend.
 
 Frontend (TS/React):
 - `F0 bindings` Tolk-to-TS contract wrappers.
 - `F1 wallet` TON Connect.
-- `F2 deposit-withdraw` pool messaging, Omniston swap-then-deposit.
-- `F3 dashboard` live APR, odds, prize estimate, history.
+- `F2 deposit-withdraw` pool messaging via direct jUSDT TEP-74 transfers.
+- `F3 dashboard` odds, prize estimate, draw history, activity, sourced from the backend API.
 
 Tooling:
 - `T0 test-harness` full-lifecycle sandbox suites.
@@ -62,7 +60,7 @@ addresses/        per-network contract address registry (json)
 
 ## Prerequisites
 
-- Node 22+ (see `.nvmrc`)
+- Node 24.16.0 (see `.nvmrc`)
 - Python 3.12+
 - Postgres 15+
 - A TON testnet wallet funded from the faucet
@@ -71,7 +69,25 @@ addresses/        per-network contract address registry (json)
 
 Copy `.env.example` to `.env` and fill values. Never commit `.env` or any mnemonic/key material.
 
-Per-track install and run commands are added as each track lands.
+### Quickstart (local)
+
+```
+# contracts: compile + sandbox suites
+cd contracts && npm install && npx blueprint build --all && npx jest
+
+# backend: API + tests (sqlite for tests; Postgres for run)
+cd backend && python -m venv venv && . venv/bin/activate && pip install -r requirements.txt -r requirements-dev.txt
+ruff check app tests && pytest -q
+
+# frontend: dev server / checks
+cd frontend && npm ci && npm run dev
+npm run lint && npm run typecheck && npm run test
+```
+
+### Testnet deploy
+
+See [`DEPLOY.md`](DEPLOY.md) for end-to-end testnet bring-up (Blueprint deploy scripts, keeper, demo
+seed + draw cycle, static frontend) and the Docker Compose path for the off-chain services.
 
 ## Networks
 
