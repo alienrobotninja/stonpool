@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     min_hold_epochs: int = 1  # epochs a deposit must age before it is draw-eligible
     skim_bps: int = 1000  # admin cut of the pot at settle (matches on-chain config)
     prize_tiers: int = 3
+    deposit_cutoff: int = 600  # epoch_end = deposit_deadline + deposit_cutoff; matches deploy
+
+    # keeper runtime
+    operator_mnemonic: str = ""  # 24 words; empty -> dry-run (RecordingSender, no broadcast)
+    keeper_poll_interval: int = 15
+    keeper_dry_run: bool = False
+    keeper_min_yield: int = 1  # dust floor below which a harvest tick is skipped
 
     @property
     def is_mainnet(self) -> bool:
