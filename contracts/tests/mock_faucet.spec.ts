@@ -68,7 +68,7 @@ describe('mock faucet', () => {
   let usdtMinter: Address;
   let usdcMinter: Address;
 
-  async function deployStack(configure: boolean) {
+  async function deployStack(configure: boolean, faucetBalance = 5_000_000_000n) {
     bc = await Blockchain.create();
     bc.now = T0;
     admin = await bc.treasury('admin');
@@ -82,7 +82,7 @@ describe('mock faucet', () => {
       .endCell();
     const fInit = { code: faucetCode, data: fData };
     faucet = bc.openContract(new Faucet(contractAddress(0, fInit), fInit));
-    await faucet.sendDeploy(admin.getSender(), 5_000_000_000n);
+    await faucet.sendDeploy(admin.getSender(), faucetBalance);
 
     const usdtData = beginCell().storeCoins(0).storeAddress(faucet.address).storeRef(content).storeRef(walletCode).endCell();
     const usdcData = beginCell().storeCoins(0).storeAddress(faucet.address).storeRef(beginCell().storeUint(0x02, 8).endCell()).storeRef(walletCode).endCell();
@@ -160,6 +160,23 @@ describe('mock faucet', () => {
   it('get_last_claim is 0 for an address that never claimed', async () => {
     await deployStack(true);
     expect(await faucet.getLastClaim(user.address)).toBe(0n);
+  });
+
+  it('an underfunded faucet cannot service a claim: it reverts and mints nothing (B11.S3)', async () => {
+    // 0.2 TON deploy; the faucet pays 2 * MINT_VALUE = 0.4 TON of mint gas from its own
+    // balance, so a low-value claim leaves it unable to fund both mints
+    await deployStack(true, 200_000_000n);
+    const supplyBefore = await minterReader(usdtMinter).getSupply();
+
+    const res = await bc.sendMessage(internal({
+      from: user.address, to: faucet.address, value: 50_000_000n,
+      body: beginCell().storeUint(OP_REQUEST, 32).storeUint(0, 64).endCell(),
+    }));
+
+    // the claim aborts (action phase can't fund the mints), so it is atomic: nothing partial
+    expect(res.transactions).toHaveTransaction({ to: faucet.address, success: false });
+    expect(await minterReader(usdtMinter).getSupply()).toBe(supplyBefore); // no tokens minted
+    expect(await faucet.getLastClaim(user.address)).toBe(0n);              // cooldown not consumed
   });
 
   it('unknown opcode reverts', async () => {
