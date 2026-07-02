@@ -36,7 +36,7 @@ struct (0x7e571002) ConfigurePool {
     router: address
 }
 
-type AllowedMessageToPool = ProvideLp | LpBurnNotification | AccrueYield | ConfigurePool
+type AllowedMessageToPool = ProvideLp | LpBurnNotification | AccrueYield | SimulateLoss | ConfigurePool
 
 fun lpForDeposit(amount: coins, reserve: coins, lpSupply: coins): coins {
     if (lpSupply == 0) {
@@ -105,6 +105,15 @@ fun onInternalMessage(in: InMessage) {
             var storage = lazy PoolStorage.load();
             assert (in.senderAddress == storage.adminAddress) throw ERR_UNAUTHORIZED;
             storage.reserve += msg.amount;
+            storage.save();
+        }
+
+        SimulateLoss => {
+            var storage = lazy PoolStorage.load();
+            assert (in.senderAddress == storage.adminAddress) throw ERR_UNAUTHORIZED;
+            // clamp so a loss larger than the reserve floors at zero instead of underflowing
+            val loss = msg.amount > storage.reserve ? storage.reserve : msg.amount;
+            storage.reserve -= loss;
             storage.save();
         }
 

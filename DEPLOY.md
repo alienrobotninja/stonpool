@@ -40,7 +40,8 @@ JETTON_MINTER=<jUSDT_minter> npx blueprint run deployStonpool --testnet --demo
 ```
 
 The script deploys the mock STON.fi venue, vault, stonfi adapter, governor, draw-engine, and pool-core
-in dependency order, runs the wiring messages, and prints an address block for both `.env` files.
+in dependency order, runs the wiring messages, prints an address block for both `.env` files, and
+writes the full set to `addresses/<network>.json`.
 
 ## 4. Wire the env files
 

@@ -14,6 +14,7 @@ const OP_CFG_STONFI_ROUTER = 0x7e571001;
 const OP_CFG_STONFI_POOL = 0x7e571002;
 const OP_STONFI_PAYOUT = 0x7e571003;
 const OP_STONFI_ACCRUE = 0x7e571004;
+const OP_STONFI_SIMULATE_LOSS = 0x7e571005;
 
 // Standard jetton burn notification op (mock-jetton wallet -> its master).
 const OP_BURN_NOTIFICATION = 0x7bdd97de;
@@ -66,6 +67,14 @@ struct (0x7e571003) PayOut {
 // admin -> pool: grow reserve to model accrued swap fees. lpSupply is untouched, so
 // each LP token redeems for more underlying afterward.
 struct (0x7e571004) AccrueYield {
+    queryId: uint64
+    amount: coins
+}
+
+// admin -> pool: shrink reserve to model a depeg/impermanent loss. lpSupply is
+// untouched, so each LP token redeems for less underlying afterward; the shortfall is
+// borne proportionally by all LP holders (test infra only).
+struct (0x7e571005) SimulateLoss {
     queryId: uint64
     amount: coins
 }

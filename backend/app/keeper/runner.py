@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import logging
 import signal
+import sys
 from collections.abc import Awaitable, Callable
 from time import time
 
@@ -128,6 +129,46 @@ async def _amain() -> None:
     await runner.run_forever(stop)
 
 
-def main() -> None:
+def check_config(cfg: Settings) -> list[str]:
+    # non-broadcasting config validation for `python -m app.keeper --check`
+    problems: list[str] = []
+    required = (
+        "pool_core_address",
+        "adapter_address",
+        "draw_engine_address",
+        "jetton_master_address",
+    )
+    for name in required:
+        if not getattr(cfg, name):
+            problems.append(f"{name} is unset")
+    if cfg.operator_mnemonic:
+        words = len(cfg.operator_mnemonic.split())
+        if words != 24:
+            problems.append(f"operator_mnemonic has {words} words, expected 24")
+    if cfg.keeper_poll_interval <= 0:
+        problems.append("keeper_poll_interval must be positive")
+    return problems
+
+
+def _run_check(cfg: Settings) -> int:
+    problems = check_config(cfg)
+    if not problems:
+        try:
+            # builds the wallet (bad mnemonic / missing pytoniq surface here); no broadcast
+            make_sender(cfg, ToncenterClient(cfg))
+        except Exception as exc:
+            problems.append(f"sender build failed: {exc}")
+    for p in problems:
+        log.error("config: %s", p)
+    if not problems:
+        live = not (cfg.keeper_dry_run or not cfg.operator_mnemonic)
+        log.info("config ok (%s)", "live" if live else "dry-run")
+    return 1 if problems else 0
+
+
+def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    args = sys.argv[1:] if argv is None else argv
+    if "--check" in args:
+        raise SystemExit(_run_check(get_settings()))
     asyncio.run(_amain())

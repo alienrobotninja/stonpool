@@ -49,13 +49,13 @@ contracts/        Blueprint project: Tolk sources, wrappers, sandbox tests, depl
   wrappers/         TS contract wrappers (F0 bindings live here)
   tests/            @ton/sandbox suites (T0)
   scripts/          deploy + ops (T1)
+  addresses/        per-network registry (json), written by deployStonpool
 backend/          FastAPI service
   app/
   alembic/
   tests/
 frontend/         Vite + React app
   src/
-addresses/        per-network contract address registry (json)
 ```
 
 ## Prerequisites
@@ -89,9 +89,50 @@ npm run lint && npm run typecheck && npm run test
 See [`DEPLOY.md`](DEPLOY.md) for end-to-end testnet bring-up (Blueprint deploy scripts, keeper, demo
 seed + draw cycle, static frontend) and the Docker Compose path for the off-chain services.
 
+### Seed the pool with test tokens
+
+`deployStonpool` writes every deployed address to `contracts/addresses/testnet.json`; the faucet and
+stable minters are in `deployMockStack`'s console output (the faucet is not in the registry). The
+faucet must hold TON or claims revert. `seedDemoPool` faucet-claims then deposits.
+
+Pull the addresses and seed (PowerShell):
+
+```
+cd contracts
+$reg = Get-Content addresses/testnet.json | ConvertFrom-Json
+$env:JETTON_MINTER = $reg.jettonMinter
+$env:STONPOOL_POOL_CORE_ADDRESS = $reg.poolCore
+$env:FAUCET_ADDRESS = "<faucet from deployMockStack>"
+npx blueprint run seedDemoPool --testnet
+```
+
+bash:
+
+```
+cd contracts
+export JETTON_MINTER=$(jq -r .jettonMinter addresses/testnet.json)
+export STONPOOL_POOL_CORE_ADDRESS=$(jq -r .poolCore addresses/testnet.json)
+export FAUCET_ADDRESS=<faucet from deployMockStack>
+npx blueprint run seedDemoPool --testnet
+```
+
+The deployer seeds one position by default; set `DEMO_MNEMONICS="<24 words>;<24 words>"` (semicolon
+separated) to seed more depositors, one position each. Deposits must land before the epoch's deposit
+deadline, so seed before running `runDemoCycle`; deploy without `--demo` for a longer deposit window.
+
 ## Networks
 
 Testnet first. STON.fi v2 contracts are deployed on testnet, but `api.ston.fi` serves mainnet only and testnet stable liquidity must be self-seeded via the mock token + faucet infra. Real prize economics exist only on mainnet.
+
+## Scope
+
+Shipped is a complete testnet MVP: on-chain protocol, backend indexer/API/keeper, frontend dApp, deploy + demo tooling, CI, and Docker. Three items are deliberately deferred to a mainnet cut, since none can be exercised or verified against testnet (the real venue and its API are mainnet-only):
+
+- Real `api.ston.fi` client for live APR and referral accruals (testnet uses on-chain mock-pool reads).
+- `@ston-fi/sdk` live-APR dashboard wiring (the dApp sources APR/odds/prize from the backend API).
+- Omniston swap-then-deposit for non-stablecoin entry (deposits are direct jUSDT TEP-74).
+
+These belong to a future `feat/mainnet-integration` effort with its own testing story (forked-mainnet or staged rollout), not the testnet MVP.
 
 ## License
 
