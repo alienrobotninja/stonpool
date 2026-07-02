@@ -9,6 +9,7 @@ import { ParamGovernor } from '../wrappers/ParamGovernor';
 import { MockStonfiRouter } from '../wrappers/MockStonfiRouter';
 import { MockStonfiPool } from '../wrappers/MockStonfiPool';
 import { buildPlan, envBlock } from './stonpoolPlan';
+import { writeRegistry } from './addresses';
 
 const VALUE = {
   poolCore: toNano('0.3'),
@@ -106,6 +107,7 @@ export async function run(provider: NetworkProvider, args: string[] = []) {
   await step('wire router', () => router.sendConfigure(sender, w.routerWallet, c.stonfiPool));
   await step('wire stonfi-pool', () => stonfiPool.sendConfigure(sender, c.router));
 
-  ui.write('\ndeployed and wired. address block:\n');
+  const registry = writeRegistry(provider.network(), minter, plan);
+  ui.write(`\ndeployed and wired. registry: ${registry}\n`);
   ui.write(envBlock(minter, plan));
 }
