@@ -1,0 +1,28 @@
+when:
+  - event: tag
+
+steps:
+  publish:
+    image: node:24
+    secrets: [pages_token]
+    environment:
+      VITE_API_BASE_URL:
+        from_secret: vite_api_base_url
+      VITE_POOL_CORE_ADDRESS:
+        from_secret: vite_pool_core_address
+      VITE_FAUCET_ADDRESS:
+        from_secret: vite_faucet_address
+      VITE_APP_URL:
+        from_secret: vite_app_url
+    commands:
+      - cd frontend
+      - npm ci
+      - npm run build
+      # publish dist/ to the pages branch; Codeberg serves it at <user>.codeberg.page/<repo>
+      - cd dist
+      - git init -q -b pages
+      - git config user.email ci@stonpool
+      - git config user.name woodpecker
+      - git add -A
+      - git commit -qm "pages ${CI_COMMIT_TAG}"
+      - git push -qf "https://$${PAGES_TOKEN}@codeberg.org/$CI_REPO.git" pages
