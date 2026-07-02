@@ -89,6 +89,37 @@ npm run lint && npm run typecheck && npm run test
 See [`DEPLOY.md`](DEPLOY.md) for end-to-end testnet bring-up (Blueprint deploy scripts, keeper, demo
 seed + draw cycle, static frontend) and the Docker Compose path for the off-chain services.
 
+### Seed the pool with test tokens
+
+`deployStonpool` writes every deployed address to `contracts/addresses/testnet.json`; the faucet and
+stable minters are in `deployMockStack`'s console output (the faucet is not in the registry). The
+faucet must hold TON or claims revert. `seedDemoPool` faucet-claims then deposits.
+
+Pull the addresses and seed (PowerShell):
+
+```
+cd contracts
+$reg = Get-Content addresses/testnet.json | ConvertFrom-Json
+$env:JETTON_MINTER = $reg.jettonMinter
+$env:STONPOOL_POOL_CORE_ADDRESS = $reg.poolCore
+$env:FAUCET_ADDRESS = "<faucet from deployMockStack>"
+npx blueprint run seedDemoPool --testnet
+```
+
+bash:
+
+```
+cd contracts
+export JETTON_MINTER=$(jq -r .jettonMinter addresses/testnet.json)
+export STONPOOL_POOL_CORE_ADDRESS=$(jq -r .poolCore addresses/testnet.json)
+export FAUCET_ADDRESS=<faucet from deployMockStack>
+npx blueprint run seedDemoPool --testnet
+```
+
+The deployer seeds one position by default; set `DEMO_MNEMONICS="<24 words>;<24 words>"` (semicolon
+separated) to seed more depositors, one position each. Deposits must land before the epoch's deposit
+deadline, so seed before running `runDemoCycle`; deploy without `--demo` for a longer deposit window.
+
 ## Networks
 
 Testnet first. STON.fi v2 contracts are deployed on testnet, but `api.ston.fi` serves mainnet only and testnet stable liquidity must be self-seeded via the mock token + faucet infra. Real prize economics exist only on mainnet.
