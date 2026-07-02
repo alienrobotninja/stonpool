@@ -1,10 +1,12 @@
 import asyncio
 
+import pytest
+
 from app.clients.quote import AdapterState, LpQuote
 from app.core.config import Settings
 from app.keeper import RecordingSender
 from app.keeper.planner import KeeperState, Phase
-from app.keeper.runner import KeeperRunner, build_state, make_sender
+from app.keeper.runner import KeeperRunner, build_state, check_config, main, make_sender
 from app.keeper.wallet_sender import WalletSender
 from tests._chain import FakeGetMethodClient
 
@@ -127,3 +129,47 @@ def test_make_sender_goes_live_with_mnemonic(monkeypatch):
     words = " ".join(["word"] * 24)
     sender = make_sender(Settings(operator_mnemonic=words), FakeGetMethodClient({}))
     assert isinstance(sender, WalletSender) and captured["mnemonic"] == ["word"] * 24
+
+
+JM = "0:" + "a7" * 32
+
+
+def _full_cfg(**over):
+    base = dict(
+        env="testnet", pool_core_address=POOL, adapter_address=ADP,
+        draw_engine_address=DE, jetton_master_address=JM,
+    )
+    base.update(over)
+    return Settings(**base)
+
+
+def test_check_config_flags_unset_addresses():
+    problems = check_config(Settings(env="testnet"))
+    assert any("pool_core_address" in p for p in problems)
+    assert any("draw_engine_address" in p for p in problems)
+
+
+def test_check_config_flags_short_mnemonic():
+    assert any("expected 24" in p for p in check_config(_full_cfg(operator_mnemonic="a b c")))
+
+
+def test_check_config_flags_nonpositive_interval():
+    assert any("poll_interval" in p for p in check_config(_full_cfg(keeper_poll_interval=0)))
+
+
+def test_check_config_clean_when_complete():
+    assert check_config(_full_cfg(keeper_dry_run=True)) == []
+
+
+def test_main_check_exits_zero_on_valid_dry_run(monkeypatch):
+    monkeypatch.setattr("app.keeper.runner.get_settings", lambda: _full_cfg(keeper_dry_run=True))
+    with pytest.raises(SystemExit) as e:
+        main(["--check"])
+    assert e.value.code == 0
+
+
+def test_main_check_exits_one_on_bad_config(monkeypatch):
+    monkeypatch.setattr("app.keeper.runner.get_settings", lambda: Settings(env="testnet"))
+    with pytest.raises(SystemExit) as e:
+        main(["--check"])
+    assert e.value.code == 1

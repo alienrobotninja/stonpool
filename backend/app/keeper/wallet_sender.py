@@ -17,6 +17,8 @@ from app.clients.chain import ToncenterClient
 
 class WalletSender:
     def __init__(self, client: ToncenterClient, mnemonic: list[str], *, workchain: int = 0):
+        if len(mnemonic) != 24:
+            raise ValueError(f"operator mnemonic must be 24 words, got {len(mnemonic)}")
         from pytoniq import WalletV5R1  # lazy
         from pytoniq_core.crypto.keys import mnemonic_to_private_key
 
