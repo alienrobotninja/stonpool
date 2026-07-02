@@ -7,6 +7,7 @@ import { buildRegistry, loadRegistry, registryPath, writeRegistry } from '../scr
 
 const admin = Address.parseRaw('0:' + '11'.repeat(32));
 const minter = Address.parseRaw('0:' + '22'.repeat(32));
+const faucet = Address.parseRaw('0:' + '99'.repeat(32));
 const code = (tag: number): Cell => beginCell().storeUint(tag, 32).endCell();
 const input: PlanInput = {
   admin, minter, genesis: 1_700_000_000, epoch: 1, demo: false,
@@ -25,11 +26,17 @@ describe('address registry', () => {
     expect(reg.adapter.startsWith('0:')).toBe(true);
   });
 
+  it('folds in the faucet when provided, omits it otherwise', () => {
+    const plan = buildPlan(input);
+    expect(buildRegistry('testnet', minter, plan, faucet).faucet).toBe(faucet.toRawString());
+    expect(buildRegistry('testnet', minter, plan).faucet).toBeUndefined();
+  });
+
   it('round-trips through disk', () => {
     const dir = mkdtempSync(join(tmpdir(), 'stonpool-reg-'));
     const plan = buildPlan(input);
-    const path = writeRegistry('testnet', minter, plan, dir);
+    const path = writeRegistry('testnet', minter, plan, faucet, dir);
     expect(path).toBe(registryPath('testnet', dir));
-    expect(loadRegistry('testnet', dir)).toEqual(buildRegistry('testnet', minter, plan));
+    expect(loadRegistry('testnet', dir)).toEqual(buildRegistry('testnet', minter, plan, faucet));
   });
 });
