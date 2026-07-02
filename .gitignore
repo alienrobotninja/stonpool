@@ -8,6 +8,7 @@ ROADMAP.md
 .env
 .env.*
 !.env.example
+!.env.fy.example
 *.mnemonic
 *.seed
 deployer.key

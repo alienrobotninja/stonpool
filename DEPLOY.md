@@ -149,6 +149,66 @@ is set in `backend/.env`. Validate `app/keeper/wallet_sender.py` against the ins
 version before relying on live broadcasts - that signing path is wired here but not exercised by the
 test suite.
 
+## 11. Fly.io path (production)
+
+Compose is for local; Fly is the hosted target. On-chain steps (1-3, 7-8) still run via Blueprint.
+Two Fly apps back the off-chain services: `stonpool-api` (`api` + `keeper` processes, `backend/fly.toml`)
+and `stonpool-web` (static frontend, `frontend/fly.toml`). Install `flyctl` and `fly auth login` first.
+
+Launch both apps without deploying (registers them, keeps the committed `fly.toml`):
+
+```
+fly launch --no-deploy --copy-config --name stonpool-api -c backend/fly.toml --dockerfile backend/Dockerfile
+fly launch --no-deploy --copy-config --name stonpool-web -c frontend/fly.toml --dockerfile frontend/Dockerfile
+```
+
+Provision Postgres and attach it to the api app (this sets `DATABASE_URL` on `stonpool-api`):
+
+```
+fly pg create --name stonpool-db --region ams
+fly pg attach stonpool-db -a stonpool-api
+```
+
+Push the app secrets. Copy `.env.fly.example` to `.env.fly`, fill it from `addresses/testnet.json`
+plus the toncenter key and operator mnemonic, then run the helper. It rewrites the attached
+`DATABASE_URL` to the async driver and sets `STONPOOL_DATABASE_URL`:
+
+```
+cp .env.fly.example .env.fly    # fill in
+./fly-secrets.sh .env.fly stonpool-api
+```
+
+PowerShell users without bash: read `DATABASE_URL` via `fly ssh console -a stonpool-api -C "printenv DATABASE_URL"`,
+swap `postgres://` for `postgresql+asyncpg://`, and set everything by hand:
+
+```
+fly secrets set -a stonpool-api STONPOOL_DATABASE_URL=postgresql+asyncpg://... STONPOOL_OPERATOR_MNEMONIC="..." STONPOOL_TONCENTER_API_KEY=... STONPOOL_POOL_CORE_ADDRESS=... [and the rest from .env.fly.example]
+```
+
+Deploy the backend (the release command runs `alembic upgrade head`; `min_machines_running = 1`
+keeps the indexer polling, and the `keeper` process runs as a worker):
+
+```
+fly deploy -c backend/fly.toml
+```
+
+Frontend, option A (Fly static app). Pass the deploy-varying `VITE_*` as build args; the rest are
+in `frontend/fly.toml`:
+
+```
+fly deploy -c frontend/fly.toml \
+  --build-arg VITE_API_BASE_URL=https://stonpool-api.fly.dev \
+  --build-arg VITE_POOL_CORE_ADDRESS=<pool_core> \
+  --build-arg VITE_FAUCET_ADDRESS=<faucet>
+```
+
+Frontend, option B (Codeberg Pages). Set the repo CI secrets (`pages_token`, `vite_api_base_url`,
+`vite_pool_core_address`, `vite_faucet_address`, `vite_app_url`), then push a tag; `.woodpecker/pages.yml`
+builds and publishes `dist/` to the `pages` branch. Pick one frontend target, not both.
+
+Set `VITE_APP_URL` to whichever origin you ship to (`https://stonpool-web.fly.dev` or the Pages URL)
+so the generated `tonconnect-manifest.json` matches.
+
 ## CI
 
 Codeberg (Woodpecker) runs three parallel workflows under `.woodpecker/` on every push and PR:
