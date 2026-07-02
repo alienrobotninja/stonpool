@@ -49,13 +49,13 @@ contracts/        Blueprint project: Tolk sources, wrappers, sandbox tests, depl
   wrappers/         TS contract wrappers (F0 bindings live here)
   tests/            @ton/sandbox suites (T0)
   scripts/          deploy + ops (T1)
+  addresses/        per-network registry (json), written by deployStonpool
 backend/          FastAPI service
   app/
   alembic/
   tests/
 frontend/         Vite + React app
   src/
-addresses/        per-network contract address registry (json)
 ```
 
 ## Prerequisites
@@ -92,6 +92,16 @@ seed + draw cycle, static frontend) and the Docker Compose path for the off-chai
 ## Networks
 
 Testnet first. STON.fi v2 contracts are deployed on testnet, but `api.ston.fi` serves mainnet only and testnet stable liquidity must be self-seeded via the mock token + faucet infra. Real prize economics exist only on mainnet.
+
+## Scope
+
+Shipped is a complete testnet MVP: on-chain protocol, backend indexer/API/keeper, frontend dApp, deploy + demo tooling, CI, and Docker. Three items are deliberately deferred to a mainnet cut, since none can be exercised or verified against testnet (the real venue and its API are mainnet-only):
+
+- Real `api.ston.fi` client for live APR and referral accruals (testnet uses on-chain mock-pool reads).
+- `@ston-fi/sdk` live-APR dashboard wiring (the dApp sources APR/odds/prize from the backend API).
+- Omniston swap-then-deposit for non-stablecoin entry (deposits are direct jUSDT TEP-74).
+
+These belong to a future `feat/mainnet-integration` effort with its own testing story (forked-mainnet or staged rollout), not the testnet MVP.
 
 ## License
 
