@@ -107,7 +107,9 @@ export async function run(provider: NetworkProvider, args: string[] = []) {
   await step('wire router', () => router.sendConfigure(sender, w.routerWallet, c.stonfiPool));
   await step('wire stonfi-pool', () => stonfiPool.sendConfigure(sender, c.router));
 
-  const registry = writeRegistry(provider.network(), minter, plan);
+  const faucet = process.env.FAUCET ? Address.parse(process.env.FAUCET) : undefined;
+  const registry = writeRegistry(provider.network(), minter, plan, faucet);
+  if (!faucet) ui.write('note: set FAUCET to record the faucet in the registry');
   ui.write(`\ndeployed and wired. registry: ${registry}\n`);
   ui.write(envBlock(minter, plan));
 }

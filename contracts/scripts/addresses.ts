@@ -13,12 +13,13 @@ export type AddressRegistry = {
   governor: string;
   router: string;
   stonfiPool: string;
+  faucet?: string;
   wallets: { pool: string; adapter: string; adapterLp: string; vault: string; router: string };
 };
 
 const raw = (a: Address) => a.toRawString();
 
-export function buildRegistry(network: string, minter: Address, plan: Plan): AddressRegistry {
+export function buildRegistry(network: string, minter: Address, plan: Plan, faucet?: Address): AddressRegistry {
   const c = plan.core;
   const w = plan.wallets;
   return {
@@ -31,6 +32,7 @@ export function buildRegistry(network: string, minter: Address, plan: Plan): Add
     governor: raw(c.governor),
     router: raw(c.router),
     stonfiPool: raw(c.stonfiPool),
+    ...(faucet ? { faucet: raw(faucet) } : {}),
     wallets: {
       pool: raw(w.poolWallet),
       adapter: raw(w.adapterWallet),
@@ -43,10 +45,10 @@ export function buildRegistry(network: string, minter: Address, plan: Plan): Add
 
 export const registryPath = (network: string, dir = 'addresses') => join(dir, `${network}.json`);
 
-export function writeRegistry(network: string, minter: Address, plan: Plan, dir = 'addresses'): string {
+export function writeRegistry(network: string, minter: Address, plan: Plan, faucet?: Address, dir = 'addresses'): string {
   const path = registryPath(network, dir);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(buildRegistry(network, minter, plan), null, 2) + '\n');
+  writeFileSync(path, JSON.stringify(buildRegistry(network, minter, plan, faucet), null, 2) + '\n');
   return path;
 }
 

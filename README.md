@@ -92,8 +92,9 @@ seed + draw cycle, static frontend) and the Docker Compose path for the off-chai
 ### Seed the pool with test tokens
 
 `deployStonpool` writes every deployed address to `contracts/addresses/testnet.json`; the faucet and
-stable minters are in `deployMockStack`'s console output (the faucet is not in the registry). The
-faucet must hold TON or claims revert. `seedDemoPool` faucet-claims then deposits.
+stable minters are in `deployMockStack`'s console output. The faucet is in the registry too when
+`deployStonpool` was run with `FAUCET` set (otherwise paste it from `deployMockStack`). The faucet
+must hold TON or claims revert. `seedDemoPool` faucet-claims then deposits.
 
 Pull the addresses and seed (PowerShell):
 
@@ -102,7 +103,7 @@ cd contracts
 $reg = Get-Content addresses/testnet.json | ConvertFrom-Json
 $env:JETTON_MINTER = $reg.jettonMinter
 $env:STONPOOL_POOL_CORE_ADDRESS = $reg.poolCore
-$env:FAUCET_ADDRESS = "<faucet from deployMockStack>"
+$env:FAUCET_ADDRESS = $reg.faucet    # or paste from deployMockStack if not in the registry
 npx blueprint run seedDemoPool --testnet
 ```
 
@@ -112,7 +113,7 @@ bash:
 cd contracts
 export JETTON_MINTER=$(jq -r .jettonMinter addresses/testnet.json)
 export STONPOOL_POOL_CORE_ADDRESS=$(jq -r .poolCore addresses/testnet.json)
-export FAUCET_ADDRESS=<faucet from deployMockStack>
+export FAUCET_ADDRESS=$(jq -r '.faucet // empty' addresses/testnet.json)   # or paste from deployMockStack
 npx blueprint run seedDemoPool --testnet
 ```
 
