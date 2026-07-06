@@ -1,11 +1,9 @@
 import { writeFileSync } from "fs";
 import { join } from "path";
-
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { loadEnv, type Plugin } from "vite";
 import { defineConfig } from "vitest/config";
-
 import { buildManifest, missingEnv } from "./src/build-config";
 
 // fail a production build on dead config, and emit the tonconnect manifest from VITE_APP_URL
@@ -40,6 +38,14 @@ function stonpoolBuild(mode: string): Plugin {
 
 export default defineConfig(({ mode }) => ({
   plugins: [react(), tailwindcss(), stonpoolBuild(mode)],
+  define: {
+    global: "globalThis",
+  },
+  resolve: {
+    alias: {
+      buffer: "buffer",
+    },
+  },
   test: {
     globals: true,
     environment: "jsdom",
