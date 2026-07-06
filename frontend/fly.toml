@@ -1,22 +1,21 @@
-app = "stonpool-web"
-primary_region = "ams"
+# fly.toml app configuration file generated for stonpool-web on 2026-07-02T17:31:45+01:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'stonpool-web'
+primary_region = 'ams'
 
 [build]
   dockerfile = "Dockerfile"
 
-# vite inlines these at image build; the env guard fails the build if the required ones are unset.
-# override per deploy: fly deploy --build-arg VITE_API_BASE_URL=... --build-arg VITE_POOL_CORE_ADDRESS=...
-[build.args]
-  VITE_APP_URL = "https://stonpool-web.fly.dev"
-  VITE_NETWORK = "testnet"
-
 [http_service]
   internal_port = 80
   force_https = true
-  auto_stop_machines = true
+  auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 0
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "256mb"
+  size = 'shared-cpu-1x'
+  memory = '256mb'
