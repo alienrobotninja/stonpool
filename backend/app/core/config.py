@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     prize_tiers: int = 3
     deposit_cutoff: int = 600  # epoch_end = deposit_deadline + deposit_cutoff; matches deploy
 
+    indexer_poll_interval: int = 10
+
     # keeper runtime
     operator_mnemonic: str = ""  # 24 words; empty -> dry-run (RecordingSender, no broadcast)
     keeper_poll_interval: int = 15
