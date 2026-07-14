@@ -1,10 +1,18 @@
 import { useState } from "react";
+import { Address } from "@ton/core";
 
 import { config } from "../config";
 import { buildFaucetClaim } from "../ton/messages";
 import { useWallet } from "../ton/useWallet";
 
 const CLAIM_VALUE = "300000000"; // 0.3 TON covers the faucet's two mint sends
+
+// TonConnect rejects raw 0:hex addresses; convert to TEP-2 friendly (testnet, bounceable)
+const FAUCET_ADDR = Address.parseRaw(config.addresses.faucet).toString({
+  urlSafe: true,
+  bounceable: true,
+  testOnly: true,
+});
 
 type Status = "idle" | "pending" | "sent" | "error";
 
@@ -15,9 +23,7 @@ export function FaucetCard({ onClaimed }: { onClaimed?: () => void }) {
   async function claim() {
     setStatus("pending");
     try {
-      await send([
-        { address: config.addresses.faucet, amount: CLAIM_VALUE, payload: buildFaucetClaim() },
-      ]);
+      await send([{ address: FAUCET_ADDR, amount: CLAIM_VALUE, payload: buildFaucetClaim() }]);
       setStatus("sent");
       onClaimed?.();
     } catch (e) {
@@ -49,4 +55,3 @@ export function FaucetCard({ onClaimed }: { onClaimed?: () => void }) {
     </div>
   );
 }
-
