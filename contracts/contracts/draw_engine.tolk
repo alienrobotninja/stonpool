@@ -5,7 +5,12 @@ import "draw_messages"
 
 const ERR_ALREADY_COMMITTED = 435
 const ERR_ALREADY_REVEALED = 436
-const DRAW_RESULT_GAS = ton("0.5") // gas allowance so pool-core can run the payout
+// gas allowance forwarded to pool-core so it can run the full payout loop:
+// pool-core sends up to prizeTiers Payout messages (PAYOUT_GAS each) plus the skim
+// send plus compute/storage over the ledger. Sized for the worst case (8 tiers) so
+// the action phase never runs dry mid-loop and silently aborts an already-"finalized"
+// draw. 1.1 = 0.15 base + 0.12 * 8 tiers.
+const DRAW_RESULT_GAS = ton("1.1")
 
 struct CommitState {
     commitHash: uint256

@@ -24,7 +24,9 @@ const WITHDRAW_GAS = ton("0.15");
 const HARVEST_GAS = ton("0.15");
 const START_DRAW_GAS = ton("0.05");
 const PAYOUT_GAS = ton("0.1");
-const SETTLE_GAS = ton("0.2");
+// covers draw-engine's finalize compute plus its DrawResultMsg forward back to us;
+// DrawResultMsg then carries DRAW_RESULT_GAS sized for our full payout loop below
+const SETTLE_GAS = ton("0.35");
 
 struct PoolStorage {
     currentEpoch: EpochId
