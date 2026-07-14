@@ -252,3 +252,5 @@ get fun preview_winner(word: uint256): address {
     val s = lazy PoolStorage.load();
     return selectWinner(s.ledger, s.currentEpoch, minHoldOf(s.config), false, word);
 }
+
+
