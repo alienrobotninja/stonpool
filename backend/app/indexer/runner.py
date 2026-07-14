@@ -54,4 +54,4 @@ async def run_forever(stop: asyncio.Event, cfg: Settings | None = None) -> None:
                 await asyncio.wait_for(stop.wait(), timeout=cfg.indexer_poll_interval)
     finally:
         await client.aclose()
-    log.info("indexer down")
+    log.info(

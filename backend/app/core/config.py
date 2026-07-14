@@ -24,6 +24,7 @@ class Settings(BaseSettings):
 
     db_echo: bool = False
     db_pool_size: int = 5
+    db_pooled: bool = False  # true if database_url points at a pgbouncer-style transaction pooler
 
     min_hold_epochs: int = 1  # epochs a deposit must age before it is draw-eligible
     skim_bps: int = 1000  # admin cut of the pot at settle (matches on-chain config)
