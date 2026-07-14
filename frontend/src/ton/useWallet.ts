@@ -27,7 +27,7 @@ export function useWallet(): Wallet {
     disconnect: () => tonConnectUI.disconnect(),
     send: async (messages) => {
       await tonConnectUI.sendTransaction({
-        validUntil: Math.floor(Date.now() / 1000) + 360,
+        validUntil: Math.floor(Date.now() / 1000) + 180,
         messages,
       });
     },

@@ -20,7 +20,8 @@ export function FaucetCard({ onClaimed }: { onClaimed?: () => void }) {
       ]);
       setStatus("sent");
       onClaimed?.();
-    } catch {
+    } catch (e) {
+      console.error("faucet claim failed:", e);
       setStatus("error");
     }
   }
@@ -48,3 +49,4 @@ export function FaucetCard({ onClaimed }: { onClaimed?: () => void }) {
     </div>
   );
 }
+
