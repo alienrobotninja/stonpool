@@ -2,6 +2,7 @@ import { writeFileSync } from "fs";
 import { join } from "path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
+import { nodePolyfills } from "vite-plugin-node-polyfills";
 import { loadEnv, type Plugin } from "vite";
 import { defineConfig } from "vitest/config";
 import { buildManifest, missingEnv } from "./src/build-config";
@@ -37,15 +38,15 @@ function stonpoolBuild(mode: string): Plugin {
 }
 
 export default defineConfig(({ mode }) => ({
-  plugins: [react(), tailwindcss(), stonpoolBuild(mode)],
-  define: {
-    global: "globalThis",
-  },
-  resolve: {
-    alias: {
-      buffer: "buffer",
-    },
-  },
+  plugins: [
+    react(),
+    tailwindcss(),
+    // injects Buffer/global/process as real globals before any module runs; the
+    // @tonconnect / TON libs reach for Buffer during their own init, which the
+    // main.tsx shim was too late to satisfy
+    nodePolyfills({ globals: { Buffer: true, global: true, process: true } }),
+    stonpoolBuild(mode),
+  ],
   test: {
     globals: true,
     environment: "jsdom",

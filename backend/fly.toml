@@ -10,6 +10,11 @@ primary_region = 'ams'
   dockerfile = 'Dockerfile'
   context = "."
 
+  # the keeper process shares this image; without pytoniq a live keeper
+  # (mnemonic set) dies on import
+  [build.args]
+    INSTALL_KEEPER = 'true'
+
 [deploy]
   release_command = 'alembic upgrade head'
 
@@ -29,6 +34,13 @@ primary_region = 'ams'
     type = 'requests'
     hard_limit = 250
     soft_limit = 200
+
+  [[http_service.checks]]
+    interval = '15s'
+    timeout = '5s'
+    grace_period = '10s'
+    method = 'GET'
+    path = '/health'
 
 [[vm]]
   size = 'shared-cpu-1x'
