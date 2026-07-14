@@ -26,7 +26,7 @@ const START_DRAW_GAS = ton("0.05");
 const PAYOUT_GAS = ton("0.1");
 // covers draw-engine's finalize compute plus its DrawResultMsg forward back to us;
 // DrawResultMsg then carries DRAW_RESULT_GAS sized for our full payout loop below
-const SETTLE_GAS = ton("0.35");
+const SETTLE_GAS = ton("0.2");
 
 struct PoolStorage {
     currentEpoch: EpochId
@@ -252,5 +252,6 @@ get fun preview_winner(word: uint256): address {
     val s = lazy PoolStorage.load();
     return selectWinner(s.ledger, s.currentEpoch, minHoldOf(s.config), false, word);
 }
+
 
 

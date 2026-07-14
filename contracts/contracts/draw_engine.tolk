@@ -10,7 +10,7 @@ const ERR_ALREADY_REVEALED = 436
 // send plus compute/storage over the ledger. Sized for the worst case (8 tiers) so
 // the action phase never runs dry mid-loop and silently aborts an already-"finalized"
 // draw. 1.1 = 0.15 base + 0.12 * 8 tiers.
-const DRAW_RESULT_GAS = ton("1.1")
+const DRAW_RESULT_GAS = ton("0.5")
 
 struct CommitState {
     commitHash: uint256
@@ -163,5 +163,6 @@ get fun get_tallies(): (int, int) {
     }
     return (total, revealed);
 }
+
 
 
