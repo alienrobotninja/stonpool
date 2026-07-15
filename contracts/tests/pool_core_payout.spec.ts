@@ -90,7 +90,9 @@ describe('C1 pool-core draw-result consumption + tiered payout', () => {
     // deploy at currentEpoch = JOIN so deposits get joinEpoch = JOIN
     const init = { code, data: beginCell()
       .storeUint(JOIN, 32).storeUint(T0 + 100_000, 32).storeUint(T0, 32)
-      .storeCoins(0).storeCoins(0).storeAddress(admin.address)
+      .storeCoins(0).storeCoins(0)
+      .storeBit(false) // drawOpen: no draw outstanding at genesis
+      .storeAddress(admin.address)
       .storeRef(packConfig(cfg)).storeBit(false).storeBit(false).endCell() };
     pool = bc.openContract(new Pool(contractAddress(0, init), init));
     await pool.sendDeploy(admin.getSender());

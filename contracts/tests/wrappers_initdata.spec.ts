@@ -30,7 +30,7 @@ describe('deploy wrappers reproduce the sandbox init-data byte-for-byte', () => 
   it('pool-core', () => {
     const inline = beginCell()
       .storeUint(EPOCH, 32).storeUint(T0 + EPOCH_LENGTH - DEPOSIT_CUTOFF, 32).storeUint(T0, 32)
-      .storeCoins(0).storeCoins(0).storeAddress(admin).storeRef(packConfig(CFG)).storeBit(false).storeBit(false)
+      .storeCoins(0).storeCoins(0).storeBit(false).storeAddress(admin).storeRef(packConfig(CFG)).storeBit(false).storeBit(false)
       .endCell();
     const w = PoolCore.createFromConfig({ epoch: EPOCH, genesis: T0, admin, config: CFG }, code);
     expect(data(w).equals(inline)).toBe(true);

@@ -63,7 +63,7 @@ describe('C1 pool-core withdraw path', () => {
     return beginCell()
       .storeUint(EPOCH, 32).storeUint(DEADLINE, 32).storeUint(T0, 32)
       .storeCoins(0).storeCoins(0)
-      .storeAddress(admin.address)
+      .storeBit(false).storeAddress(admin.address)
       .storeRef(packConfig(cfg))
       .storeBit(false).storeBit(false)
       .endCell();

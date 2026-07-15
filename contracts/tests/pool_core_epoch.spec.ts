@@ -56,6 +56,7 @@ describe('C1 pool-core epoch lifecycle', () => {
     return beginCell()
       .storeUint(EPOCH, 32).storeUint(T0 + EPOCH_LENGTH - DEPOSIT_CUTOFF, 32).storeUint(T0, 32)
       .storeCoins(0).storeCoins(0)
+      .storeBit(false) // drawOpen
       .storeAddress(admin.address)
       .storeRef(packConfig(CFG))
       .storeBit(false).storeBit(false)

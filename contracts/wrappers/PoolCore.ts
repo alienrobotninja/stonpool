@@ -18,6 +18,7 @@ export function poolCoreData(c: PoolCoreConfig): Cell {
     .storeUint(c.genesis, 32)
     .storeCoins(0)
     .storeCoins(0)
+    .storeBit(false) // drawOpen: no draw outstanding at genesis
     .storeAddress(c.admin)
     .storeRef(packConfig(c.config))
     .storeBit(false)

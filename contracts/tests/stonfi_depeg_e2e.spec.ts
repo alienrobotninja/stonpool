@@ -84,7 +84,7 @@ describe('depeg propagates through pool-core: haircut withdrawals, socialized lo
     minter = contractAddress(0, mInit);
     await bc.sendMessage(internal({ from: minterAdmin.address, to: minter, value: toNano('1'), body: beginCell().endCell(), stateInit: mInit }));
 
-    const pInit = { code: loadCode('pool_core'), data: beginCell().storeUint(EPOCH, 32).storeUint(T0 + EPOCH_LENGTH - DEPOSIT_CUTOFF, 32).storeUint(T0, 32).storeCoins(0).storeCoins(0).storeAddress(admin.address).storeRef(packConfig(CFG)).storeBit(false).storeBit(false).endCell() };
+    const pInit = { code: loadCode('pool_core'), data: beginCell().storeUint(EPOCH, 32).storeUint(T0 + EPOCH_LENGTH - DEPOSIT_CUTOFF, 32).storeUint(T0, 32).storeCoins(0).storeCoins(0).storeBit(false).storeAddress(admin.address).storeRef(packConfig(CFG)).storeBit(false).storeBit(false).endCell() };
     pool = contractAddress(0, pInit);
     await bc.sendMessage(internal({ from: admin.address, to: pool, value: toNano('5'), body: beginCell().endCell(), stateInit: pInit }));
 
