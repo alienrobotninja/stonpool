@@ -23,3 +23,15 @@ struct (0x10000004) AdvanceEpoch {
 struct (0x10000016) SettleDraw {
     queryId: uint64
 }
+
+// admin -> pool-core: force-clear the drawOpen guard.
+//
+// AdvanceEpoch arms drawOpen and only a DrawResultMsg clears it, so a StartDraw that
+// never opened a draw would strand the flag and block every future advance. The
+// StartDraw bounce handles that automatically, but TON guarantees nothing about bounce
+// delivery: a bounce needs gas to fire, and bounces cannot themselves be bounced. This
+// is the escape hatch that does not depend on that. Reachable only after a genuine
+// StartDraw failure, which in practice means an unconfigured draw-engine.
+struct (0x10000017) ClearDrawOpen {
+    queryId: uint64
+}
