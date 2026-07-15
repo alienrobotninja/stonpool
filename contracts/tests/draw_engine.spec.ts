@@ -26,7 +26,10 @@ const T0 = 1_000_000;
 const COMMIT_WINDOW = 300;
 const REVEAL_WINDOW = 300;
 const BOND = 1_000_000_000n; // 1 TON
-const DRAW_RESULT_GAS = 500_000_000n; // 0.5 TON gas allowance carried on DrawResult
+// DRAW_RESULT_GAS is NOT duplicated here: it is defined once in contracts/gas.tolk,
+// coupled to pool-core's PAYOUT_GAS/MAX_PRIZE_TIERS, and read back per-test via
+// Draw.getDrawResultGas(). A local copy here silently pinned the old 0.5 TON value
+// as correct and kept passing after the contract was fixed.
 
 const addrArg = (a: Address) => ({ type: 'slice' as const, cell: beginCell().storeAddress(a).endCell() });
 
@@ -83,6 +86,10 @@ class Draw implements Contract {
   async getCommit(p: ContractProvider, who: Address) {
     const st = (await p.get('get_commit', [addrArg(who)])).stack;
     return { commitHash: st.readBigNumber(), bond: st.readBigNumber(), revealed: st.readBoolean() };
+  }
+  // the value this contract forwards on DrawResult, straight from contracts/gas.tolk
+  async getDrawResultGas(p: ContractProvider): Promise<bigint> {
+    return (await p.get('get_draw_result_gas', [])).stack.readBigNumber();
   }
 }
 
@@ -294,14 +301,14 @@ describe('C3 draw-engine commit phase', () => {
     expect((await d.getDrawState()).finalized).toBe(true);
     expect((await d.getDrawState()).seed).toBe(expected);
     expect(await d.getPhase()).toBe(4n);
-    expect(r.transactions).toHaveTransaction({ from: d.address, to: poolCore.address, op: OP_DRAW_RESULT, value: DRAW_RESULT_GAS });
+    expect(r.transactions).toHaveTransaction({ from: d.address, to: poolCore.address, op: OP_DRAW_RESULT, value: await d.getDrawResultGas() });
   });
 
   it('finalize slashes a no-show bond into the pot forwarded to poolCore', async () => {
     const d = await readyToFinalize({ a: true, b: false }); // bob never reveals
     const r = await d.sendFinalize(poolCore.getSender());
     expect((await d.getDrawState()).seed).toBe(mixSeed(0n, SA)); // only alice's secret
-    expect(r.transactions).toHaveTransaction({ from: d.address, to: poolCore.address, op: OP_DRAW_RESULT, value: BOND + DRAW_RESULT_GAS });
+    expect(r.transactions).toHaveTransaction({ from: d.address, to: poolCore.address, op: OP_DRAW_RESULT, value: BOND + (await d.getDrawResultGas()) });
   });
 
   it('fallback: zero reveals seeds from chain entropy and slashes every bond', async () => {
@@ -309,7 +316,7 @@ describe('C3 draw-engine commit phase', () => {
     const r = await d.sendFinalize(poolCore.getSender());
     expect((await d.getDrawState()).seed).not.toBe(0n); // entropy injected
     expect((await d.getDrawState()).finalized).toBe(true);
-    expect(r.transactions).toHaveTransaction({ from: d.address, to: poolCore.address, op: OP_DRAW_RESULT, value: 2n * BOND + DRAW_RESULT_GAS });
+    expect(r.transactions).toHaveTransaction({ from: d.address, to: poolCore.address, op: OP_DRAW_RESULT, value: 2n * BOND + (await d.getDrawResultGas()) });
   });
 
   it('rejects finalize before the reveal deadline', async () => {
@@ -404,8 +411,8 @@ describe('C3 draw-engine commit phase', () => {
     expect(refund.transactions).toHaveTransaction({ from: d.address, to: alice.address, value: BOND });
     bc.now = T0 + COMMIT_WINDOW + REVEAL_WINDOW;
     const fin = await d.sendFinalize(poolCore.getSender());
-    // 3 bonds in: 1 refunded + 2 slashed -> poolCore receives exactly 2*BOND
-    expect(fin.transactions).toHaveTransaction({ from: d.address, to: poolCore.address, op: OP_DRAW_RESULT, value: 2n * BOND + DRAW_RESULT_GAS });
+    // 3 bonds in: 1 refunded + 2 slashed -> poolCore receives exactly 2*BOND on top of the gas
+    expect(fin.transactions).toHaveTransaction({ from: d.address, to: poolCore.address, op: OP_DRAW_RESULT, value: 2n * BOND + (await d.getDrawResultGas()) });
   });
 
   it('a failed reveal (bad secret) refunds nothing (checks before effects)', async () => {
