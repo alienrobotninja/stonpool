@@ -82,7 +82,7 @@ describe('C1 pool-core hardening + governor integration', () => {
     bob = await bc.treasury('bob');
     const init = { code, data: beginCell()
       .storeUint(JOIN, 32).storeUint(T0 + 100_000, 32).storeUint(T0, 32)
-      .storeCoins(0).storeCoins(0).storeAddress(admin.address)
+      .storeCoins(0).storeCoins(0).storeBit(false).storeAddress(admin.address)
       .storeRef(packConfig(cfg)).storeBit(false).storeBit(false).endCell() };
     const p = bc.openContract(new Pool(contractAddress(0, init), init));
     await p.sendDeploy(admin.getSender());

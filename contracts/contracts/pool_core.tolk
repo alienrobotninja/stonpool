@@ -2,6 +2,7 @@
 // is the principal entry point (credits the ledger, forwards principal to the
 // adapter), and orchestrates epochs/draws/payouts in later steps.
 import "shared"
+import "gas"
 import "messaging"
 import "selection"
 import "pool_core_messages"
@@ -23,8 +24,8 @@ const DEPOSIT_FWD_TON = ton("0.05");
 const WITHDRAW_GAS = ton("0.15");
 const HARVEST_GAS = ton("0.15");
 const START_DRAW_GAS = ton("0.05");
-const PAYOUT_GAS = ton("0.1");
-const SETTLE_GAS = ton("0.2");
+// PAYOUT_GAS and SETTLE_GAS now come from "gas": they are coupled to
+// DRAW_RESULT_GAS in draw-engine and must not be set independently here.
 
 struct PoolStorage {
     currentEpoch: EpochId
@@ -32,6 +33,7 @@ struct PoolStorage {
     epochStart: uint32
     totalPrincipal: coins
     prizePot: coins
+    drawOpen: bool
     admin: address
     config: Cell<PoolConfig>
     wiring: map<uint8, address>
@@ -129,11 +131,20 @@ fun onInternalMessage(in: InMessage) {
             val cfg = PoolConfig.fromCell(s.config);
             val nowTs = blockchain.now() as uint32;
             assert (nowTs >= s.epochStart + cfg.epochLength) throw ERR_EPOCH_NOT_ENDED;
+            // Refuse to advance past a draw that has not settled. draw-engine does
+            // reject the StartDraw below with ERR_BUSY, but that send is NoBounce and
+            // its throw happens in a separate transaction, so the rejection never
+            // reaches us: we would already have committed the epoch bump, leaving the
+            // previous draw stranded and the new epoch with no draw at all. The bump
+            // cannot be undone after the fact, so the only correct place to stop is
+            // here, while we still own the decision.
+            assert (!s.drawOpen) throw ERR_BUSY;
 
             val endedEpoch = s.currentEpoch;
             s.currentEpoch += 1;
             s.epochStart = nowTs;
             s.depositDeadline = nowTs + cfg.epochLength - cfg.depositCutoff;
+            s.drawOpen = true;
             s.save();
 
             // harvest the ended epoch's yield into the prize pot, then open the draw for it
@@ -159,6 +170,14 @@ fun onInternalMessage(in: InMessage) {
             assert (in.senderAddress == roleAddr(s.wiring, ROLE_DRAW_ENGINE)) throw ERR_UNAUTHORIZED;
             val cfg = PoolConfig.fromCell(s.config);
             val vault = roleAddr(s.wiring, ROLE_VAULT);
+
+            // The draw is settled the moment its result lands, whatever we then do
+            // with the pot. This must be cleared before the eligible==0 branch below:
+            // that branch returns without saving, so clearing afterwards would leave
+            // drawOpen stuck true and every future AdvanceEpoch would throw ERR_BUSY,
+            // deadlocking the pool permanently.
+            s.drawOpen = false;
+            s.save();
 
             val eligible = eligibleCount(s.ledger, s.currentEpoch, cfg.minHoldEpochs);
             if (eligible == 0) { return; } // no eligible depositors: pot rolls over
@@ -249,4 +268,16 @@ get fun get_odds(who: address): int {
 get fun preview_winner(word: uint256): address {
     val s = lazy PoolStorage.load();
     return selectWinner(s.ledger, s.currentEpoch, minHoldOf(s.config), false, word);
+}
+// true from AdvanceEpoch (which opens a draw) until that draw's result lands.
+// AdvanceEpoch throws ERR_BUSY while set; the keeper reads this to know whether it
+// must settle before advancing.
+get fun get_draw_open(): bool {
+    val s = lazy PoolStorage.load();
+    return s.drawOpen;
+}
+// the coupled gas budget from "gas", exposed so tests assert against the values the
+// contract actually ships rather than hardcoding their own copies
+get fun get_gas_budget(): (int, int, int, int) {
+    return (SETTLE_GAS, DRAW_RESULT_GAS, PAYOUT_GAS, MAX_PRIZE_TIERS);
 }

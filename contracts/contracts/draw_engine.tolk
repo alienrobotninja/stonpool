@@ -1,11 +1,13 @@
 // C3 draw-engine: bonded commit-reveal producing a verifiable per-epoch seed.
 // S3 covers storage + draw start + the commit phase; reveal/finalize follow.
 import "shared"
+import "gas"
 import "draw_messages"
 
 const ERR_ALREADY_COMMITTED = 435
 const ERR_ALREADY_REVEALED = 436
-const DRAW_RESULT_GAS = ton("0.5") // gas allowance so pool-core can run the payout
+// DRAW_RESULT_GAS now comes from "gas": it is coupled to pool-core's PAYOUT_GAS and
+// MAX_PRIZE_TIERS and must not be set independently here.
 
 struct CommitState {
     commitHash: uint256
@@ -110,7 +112,10 @@ fun onInternalMessage(in: InMessage) {
             s.finalized = true;
             s.save();
 
-            // hand the result and the slashed pot to pool-core
+            // hand the result and the slashed pot to pool-core. DRAW_RESULT_GAS is sized
+            // in "gas" to fund pool-core's whole payout loop; SETTLE_GAS (which pool-core
+            // attached to FinalizeDraw) is sized to cover this forward, so this send does
+            // not eat into draw-engine's own balance.
             val result: DrawResult = { epoch: s.epoch, seed: s.seed };
             val out: DrawResultMsg = { queryId: msg.queryId, result: result };
             createMessage({ bounce: BounceMode.NoBounce, dest: s.poolCore, value: slashed + DRAW_RESULT_GAS, body: out }).send(SEND_MODE_PAY_FEES_SEPARATELY);
@@ -157,4 +162,10 @@ get fun get_tallies(): (int, int) {
         r = s.commits.iterateNext(r);
     }
     return (total, revealed);
+}
+
+// the value this contract forwards on DrawResultMsg, from the shared "gas" budget.
+// Exposed so tests assert against the shipped value rather than a hardcoded copy.
+get fun get_draw_result_gas(): int {
+    return DRAW_RESULT_GAS;
 }
