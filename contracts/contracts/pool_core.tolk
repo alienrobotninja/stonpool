@@ -53,7 +53,13 @@ fun minHoldOf(config: Cell<PoolConfig>): uint16 {
     return PoolConfig.fromCell(config).minHoldEpochs;
 }
 
-type AllowedMessage = JettonTransferNotification | RequestWithdraw | AdvanceEpoch | SettleDraw | AdapterReportMsg | DrawResultMsg | ParamsUpdated | ConfigureCore
+type AllowedMessage = JettonTransferNotification | RequestWithdraw | AdvanceEpoch | SettleDraw | ClearDrawOpen | AdapterReportMsg | DrawResultMsg | ParamsUpdated | ConfigureCore
+
+// StartDraw is currently the only send here that is not NoBounce, so it is the only
+// thing that can reach onBouncedMessage. Kept as a union anyway: if another send is
+// ever made bounceable, it must be added here deliberately rather than silently
+// falling through and being mistaken for a StartDraw.
+type BounceableMessage = StartDraw
 
 fun onInternalMessage(in: InMessage) {
     if (in.body.isEmpty()) { return; } // deploy
@@ -151,8 +157,15 @@ fun onInternalMessage(in: InMessage) {
             val harvest: HarvestYield = { queryId: 0, to: roleAddr(s.wiring, ROLE_VAULT) };
             createMessage({ bounce: BounceMode.NoBounce, dest: roleAddr(s.wiring, ROLE_ADAPTER), value: HARVEST_GAS, body: harvest }).send(SEND_MODE_REGULAR);
 
+            // Bounceable, unlike every other send here. drawOpen was just armed above,
+            // and only a DrawResultMsg clears it - which never arrives if the draw never
+            // opened. draw-engine throws ERR_INVALID_PARAMS on an unconfigured engine
+            // (commitWindow/revealWindow == 0), so without a bounce the flag would strand
+            // true and ERR_BUSY would block every future advance permanently. The bounce
+            // is the only signal that the draw did not start. Body is 128 bits, so the
+            // cheapest mode carries it intact.
             val start: StartDraw = { queryId: 0, epoch: endedEpoch };
-            createMessage({ bounce: BounceMode.NoBounce, dest: roleAddr(s.wiring, ROLE_DRAW_ENGINE), value: START_DRAW_GAS, body: start }).send(SEND_MODE_REGULAR);
+            createMessage({ bounce: BounceMode.Only256BitsOfBody, dest: roleAddr(s.wiring, ROLE_DRAW_ENGINE), value: START_DRAW_GAS, body: start }).send(SEND_MODE_REGULAR);
         }
 
         AdapterReportMsg => {
@@ -218,6 +231,15 @@ fun onInternalMessage(in: InMessage) {
             createMessage({ bounce: BounceMode.NoBounce, dest: roleAddr(s.wiring, ROLE_DRAW_ENGINE), value: SETTLE_GAS, body: fin }).send(SEND_MODE_REGULAR);
         }
 
+        ClearDrawOpen => {
+            var s = lazy PoolStorage.load();
+            assert (in.senderAddress == s.admin) throw ERR_UNAUTHORIZED;
+            // deliberately unconditional: if the flag is already clear this is a no-op,
+            // and refusing here would just add a way for the hatch itself to fail shut
+            s.drawOpen = false;
+            s.save();
+        }
+
         ParamsUpdated => {
             var s = lazy PoolStorage.load();
             assert (in.senderAddress == roleAddr(s.wiring, ROLE_GOVERNOR)) throw ERR_UNAUTHORIZED;
@@ -235,6 +257,26 @@ fun onInternalMessage(in: InMessage) {
         else => {
             assert (in.body.isEmpty()) throw ERR_UNKNOWN_OP
         }
+    }
+}
+
+// A bounce means the destination threw before committing anything, so the action it
+// was asked to perform did not happen. Tolk rejects bounces with exit code 0 when this
+// entrypoint is absent, which is silent by construction - the failure mode Finding B
+// describes. Only StartDraw is bounceable; see AdvanceEpoch.
+fun onBouncedMessage(in: InMessageBounced) {
+    in.bouncedBody.skipBouncedPrefix();
+    val msg = lazy BounceableMessage.fromSlice(in.bouncedBody);
+    match (msg) {
+        StartDraw => {
+            // the draw never opened: release the guard so the admin can fix the engine
+            // and retry AdvanceEpoch. The epoch bump itself stands - it cannot be undone
+            // from a later transaction, and re-advancing is not what we want anyway.
+            var s = lazy PoolStorage.load();
+            s.drawOpen = false;
+            s.save();
+        }
+        else => {}
     }
 }
 

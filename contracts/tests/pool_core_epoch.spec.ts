@@ -1,5 +1,5 @@
 import { Blockchain, SandboxContract, TreasuryContract, internal } from '@ton/sandbox';
-import { Cell, beginCell, contractAddress, Contract, ContractProvider, Sender, Address } from '@ton/core';
+import { Cell, beginCell, contractAddress, Contract, ContractProvider, Sender, Address, toNano } from '@ton/core';
 import '@ton/test-utils';
 import { loadCode } from './helpers';
 
@@ -7,6 +7,7 @@ const OP_ADVANCE_EPOCH = 0x10000004;
 const OP_HARVEST_YIELD = 0x10000033;
 const OP_RUN_DRAW = 0x10000013;
 const OP_DRAW_RESULT = 0x10000014;
+const OP_CLEAR_DRAW_OPEN = 0x10000017;
 const OP_CONFIGURE_CORE = 0x10000073;
 
 const ERR_UNAUTHORIZED = 401;
@@ -32,6 +33,9 @@ class Pool implements Contract {
   async sendDeploy(p: ContractProvider, via: Sender) { await p.internal(via, { value: 1_000_000_000n, body: beginCell().endCell() }); }
   async sendConfigure(p: ContractProvider, via: Sender, role: number, addr: Address) {
     await p.internal(via, { value: 50_000_000n, body: beginCell().storeUint(OP_CONFIGURE_CORE, 32).storeUint(0, 64).storeUint(role, 8).storeAddress(addr).endCell() });
+  }
+  async sendClearDrawOpen(p: ContractProvider, via: Sender) {
+    await p.internal(via, { value: 50_000_000n, body: beginCell().storeUint(OP_CLEAR_DRAW_OPEN, 32).storeUint(0, 64).endCell() });
   }
   async sendAdvance(p: ContractProvider, via: Sender, value = 600_000_000n) {
     await p.internal(via, { value, body: beginCell().storeUint(OP_ADVANCE_EPOCH, 32).storeUint(0, 64).endCell() });
@@ -93,6 +97,46 @@ describe('C1 pool-core epoch lifecycle', () => {
     const body = beginCell().storeUint(OP_DRAW_RESULT, 32).storeUint(0, 64)
       .storeUint(epoch, 32).storeUint(seed, 256).endCell();
     return bc.sendMessage(internal({ from: drawEngine.address, to: pool.address, value: 1_500_000_000n, body }));
+  }
+
+  // Wire the pool to a REAL draw-engine rather than the treasury stub the other tests
+  // use. With commitWindow = 0 its StartDraw handler throws ERR_INVALID_PARAMS for real,
+  // which is the only honest way to exercise the bounce: faking it would prove nothing
+  // about whether START_DRAW_GAS actually funds the bounce back.
+  let engine: Address;
+  async function freshWithEngine(commitWindow: number): Promise<SandboxContract<Pool>> {
+    bc = await Blockchain.create();
+    bc.now = T0;
+    admin = await bc.treasury('admin');
+    adapter = await bc.treasury('adapter');
+    vault = await bc.treasury('vault');
+    stranger = await bc.treasury('stranger');
+
+    const pInit = { code, data: poolData() };
+    const poolAddr = contractAddress(0, pInit);
+
+    // DrawStorage: poolCore, epoch, commitWindow, revealWindow, drawBond,
+    // commitDeadline, revealDeadline, finalized, seed, commits
+    const dInit = { code: loadCode('draw_engine'), data: beginCell()
+      .storeAddress(poolAddr)
+      .storeUint(0, 32)
+      .storeUint(commitWindow, 32)
+      .storeUint(900, 32)
+      .storeCoins(1_000_000_000n)
+      .storeUint(0, 32).storeUint(0, 32)
+      .storeBit(false)
+      .storeUint(0, 256)
+      .storeBit(false)
+      .endCell() };
+    engine = contractAddress(0, dInit);
+    await bc.sendMessage(internal({ from: admin.address, to: engine, value: toNano('1'), body: beginCell().endCell(), stateInit: dInit }));
+
+    const p = bc.openContract(new Pool(poolAddr, pInit));
+    await p.sendDeploy(admin.getSender());
+    await p.sendConfigure(admin.getSender(), ROLE_ADAPTER, adapter.address);
+    await p.sendConfigure(admin.getSender(), ROLE_DRAW_ENGINE, engine);
+    await p.sendConfigure(admin.getSender(), ROLE_VAULT, vault.address);
+    return p;
   }
 
   it('advance rolls the epoch and recomputes the deposit deadline', async () => {
@@ -170,6 +214,66 @@ describe('C1 pool-core epoch lifecycle', () => {
     // empty ledger -> eligible == 0 -> the early-return path
     const r = await deliverDraw(EPOCH);
     expect(r.transactions).toHaveTransaction({ to: pool.address, from: drawEngine.address, success: true });
+    expect(await pool.getDrawOpen()).toBe(false);
+  });
+
+  // BUG-2 follow-up (audit Finding B). drawOpen is armed before the StartDraw send. If
+  // the draw never opens, no DrawResultMsg will ever arrive to clear it, so without a
+  // bounce the flag strands true and ERR_BUSY blocks every future advance forever.
+  it('a bounced StartDraw clears drawOpen and advance works again', async () => {
+    pool = await freshWithEngine(0); // commitWindow = 0 -> StartDraw throws ERR_INVALID_PARAMS
+    bc.now = T0 + EPOCH_LENGTH;
+    const r = await pool.sendAdvance(admin.getSender());
+
+    // the engine really did reject it...
+    expect(r.transactions).toHaveTransaction({ from: pool.address, to: engine, success: false });
+    // ...and the bounce really did come back. If this assertion fails, START_DRAW_GAS
+    // does not fund the bounce and the automatic path is dead - report it, do not just
+    // raise the constant.
+    expect(r.transactions).toHaveTransaction({ from: engine, to: pool.address, inMessageBounced: true, success: true });
+
+    expect(await pool.getDrawOpen()).toBe(false);
+    expect((await pool.getData()).epoch).toBe(BigInt(EPOCH + 1)); // the bump stands
+    expect((await pool.getData()).prizePot).toBe(0n);             // nothing else disturbed
+
+    bc.now = T0 + 2 * EPOCH_LENGTH;
+    const r2 = await pool.sendAdvance(admin.getSender());
+    expect(r2.transactions).toHaveTransaction({ to: pool.address, success: true });
+    expect((await pool.getData()).epoch).toBe(BigInt(EPOCH + 2));
+  });
+
+  // The bounce is an optimisation, not the safety net: TON guarantees nothing about
+  // bounce delivery (it needs gas, and bounces cannot be re-bounced). The hatch is what
+  // makes the worst case "one admin transaction" instead of "pool bricked forever".
+  it('ClearDrawOpen releases the guard when the bounce never came', async () => {
+    pool = await fresh(); // drawEngine is a treasury stub: StartDraw is swallowed, no bounce
+    bc.now = T0 + EPOCH_LENGTH;
+    await pool.sendAdvance(admin.getSender());
+    expect(await pool.getDrawOpen()).toBe(true);
+
+    const r = await pool.sendClearDrawOpen(admin.getSender());
+    expect(r.transactions).toHaveTransaction({ to: pool.address, success: true });
+    expect(await pool.getDrawOpen()).toBe(false);
+
+    bc.now = T0 + 2 * EPOCH_LENGTH;
+    await pool.sendAdvance(admin.getSender());
+    expect((await pool.getData()).epoch).toBe(BigInt(EPOCH + 2));
+  });
+
+  it('only admin can clear the guard (401)', async () => {
+    pool = await fresh();
+    bc.now = T0 + EPOCH_LENGTH;
+    await pool.sendAdvance(admin.getSender());
+    const r = await pool.sendClearDrawOpen(stranger.getSender());
+    expect(r.transactions).toHaveTransaction({ to: pool.address, success: false, exitCode: ERR_UNAUTHORIZED });
+    expect(await pool.getDrawOpen()).toBe(true); // untouched
+  });
+
+  it('clearing an already-clear guard is a no-op, not a failure', async () => {
+    pool = await fresh();
+    expect(await pool.getDrawOpen()).toBe(false);
+    const r = await pool.sendClearDrawOpen(admin.getSender());
+    expect(r.transactions).toHaveTransaction({ to: pool.address, success: true });
     expect(await pool.getDrawOpen()).toBe(false);
   });
 
