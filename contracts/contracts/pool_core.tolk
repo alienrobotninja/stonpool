@@ -2,6 +2,7 @@
 // is the principal entry point (credits the ledger, forwards principal to the
 // adapter), and orchestrates epochs/draws/payouts in later steps.
 import "shared"
+import "gas"
 import "messaging"
 import "selection"
 import "pool_core_messages"
@@ -23,10 +24,8 @@ const DEPOSIT_FWD_TON = ton("0.05");
 const WITHDRAW_GAS = ton("0.15");
 const HARVEST_GAS = ton("0.15");
 const START_DRAW_GAS = ton("0.05");
-const PAYOUT_GAS = ton("0.1");
-// covers draw-engine's finalize compute plus its DrawResultMsg forward back to us;
-// DrawResultMsg then carries DRAW_RESULT_GAS sized for our full payout loop below
-const SETTLE_GAS = ton("0.2");
+// PAYOUT_GAS and SETTLE_GAS now come from "gas": they are coupled to
+// DRAW_RESULT_GAS in draw-engine and must not be set independently here.
 
 struct PoolStorage {
     currentEpoch: EpochId
@@ -252,6 +251,8 @@ get fun preview_winner(word: uint256): address {
     val s = lazy PoolStorage.load();
     return selectWinner(s.ledger, s.currentEpoch, minHoldOf(s.config), false, word);
 }
-
-
-
+// the coupled gas budget from "gas", exposed so tests assert against the values the
+// contract actually ships rather than hardcoding their own copies
+get fun get_gas_budget(): (int, int, int, int) {
+    return (SETTLE_GAS, DRAW_RESULT_GAS, PAYOUT_GAS, MAX_PRIZE_TIERS);
+}
