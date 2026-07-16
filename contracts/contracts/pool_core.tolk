@@ -27,6 +27,17 @@ const START_DRAW_GAS = ton("0.05");
 // PAYOUT_GAS and SETTLE_GAS now come from "gas": they are coupled to
 // DRAW_RESULT_GAS in draw-engine and must not be set independently here.
 
+// How the pool is parameterised and what it is wired to. One cell rather than two root
+// fields because the root cell was at TON's hard 4-ref limit - config, wiring, ledger,
+// pending - and a full root silently decides what later steps are allowed to add. These
+// two are the right pair to fold: both are governed rather than per-depositor, and each
+// has exactly one write site, so the pack cost lands on two admin paths and nowhere else.
+// Keeping config in its own cell here also leaves it free to grow past 292 bits.
+struct PoolSetup {
+    config: Cell<PoolConfig>
+    wiring: map<uint8, address>
+}
+
 struct PoolStorage {
     currentEpoch: EpochId
     depositDeadline: uint32
@@ -36,8 +47,7 @@ struct PoolStorage {
     drawOpen: bool
     withdrawNonce: uint64
     admin: address
-    config: Cell<PoolConfig>
-    wiring: map<uint8, address>
+    setup: Cell<PoolSetup>
     ledger: Ledger
     pending: map<uint64, PendingWithdraw>
 }
@@ -68,8 +78,12 @@ fun roleAddr(wiring: map<uint8, address>, role: uint8): address {
     return r.loadValue();
 }
 
-fun minHoldOf(config: Cell<PoolConfig>): uint16 {
-    return PoolConfig.fromCell(config).minHoldEpochs;
+fun PoolStorage.cfg(self): PoolConfig {
+    return PoolConfig.fromCell(PoolSetup.fromCell(self.setup).config);
+}
+
+fun PoolStorage.role(self, role: uint8): address {
+    return roleAddr(PoolSetup.fromCell(self.setup).wiring, role);
 }
 
 type AllowedMessage = JettonTransferNotification | RequestWithdraw | AdvanceEpoch | SettleDraw | ClearDrawOpen | ReclaimWithdraw | AdapterReportMsg | DrawResultMsg | ParamsUpdated | ConfigureCore
@@ -92,7 +106,7 @@ fun onInternalMessage(in: InMessage) {
     match (msg) {
         JettonTransferNotification => {
             var s = lazy PoolStorage.load();
-            val jw = roleAddr(s.wiring, ROLE_JETTON_WALLET);
+            val jw = s.role(ROLE_JETTON_WALLET);
             assert (in.senderAddress == jw) throw ERR_WRONG_SENDER;
             assert (blockchain.now() < s.depositDeadline) throw ERR_DEPOSIT_CLOSED;
 
@@ -120,7 +134,7 @@ fun onInternalMessage(in: InMessage) {
             val transfer: JettonTransferTagged = {
                 queryId: 0,
                 amount: msg.amount,
-                destination: roleAddr(s.wiring, ROLE_ADAPTER),
+                destination: s.role(ROLE_ADAPTER),
                 responseDestination: s.admin,
                 customPayload: null,
                 forwardTonAmount: DEPOSIT_FWD_TON,
@@ -135,7 +149,7 @@ fun onInternalMessage(in: InMessage) {
             val found = s.ledger.get(who);
             assert (found.isFound) throw ERR_NOTHING_TO_WITHDRAW;
             val entry = found.loadValue();
-            assert (isEligible(entry, s.currentEpoch, minHoldOf(s.config))) throw ERR_WITHDRAW_TOO_EARLY;
+            assert (isEligible(entry, s.currentEpoch, s.cfg().minHoldEpochs)) throw ERR_WITHDRAW_TOO_EARLY;
             assert (msg.amount != 0 && msg.amount <= entry.weight) throw ERR_NOTHING_TO_WITHDRAW;
 
             val remaining = entry.weight - msg.amount;
@@ -172,7 +186,7 @@ fun onInternalMessage(in: InMessage) {
             // is fine - onBouncedMessage reads only the queryId and recovers the rest from
             // the journal - and it is the cheapest mode, which is what makes the bounce
             // likely to actually fire on WITHDRAW_GAS.
-            val adapter = roleAddr(s.wiring, ROLE_ADAPTER);
+            val adapter = s.role(ROLE_ADAPTER);
             val req: WithdrawPrincipal = { queryId: qid, amount: msg.amount, to: who };
             createMessage({ bounce: BounceMode.Only256BitsOfBody, dest: adapter, value: WITHDRAW_GAS, body: req }).send(SEND_MODE_REGULAR);
         }
@@ -180,7 +194,7 @@ fun onInternalMessage(in: InMessage) {
         AdvanceEpoch => {
             var s = lazy PoolStorage.load();
             assert (in.senderAddress == s.admin) throw ERR_UNAUTHORIZED;
-            val cfg = PoolConfig.fromCell(s.config);
+            val cfg = s.cfg();
             val nowTs = blockchain.now() as uint32;
             assert (nowTs >= s.epochStart + cfg.epochLength) throw ERR_EPOCH_NOT_ENDED;
             // Refuse to advance past a draw that has not settled. draw-engine does
@@ -200,8 +214,8 @@ fun onInternalMessage(in: InMessage) {
             s.save();
 
             // harvest the ended epoch's yield into the prize pot, then open the draw for it
-            val harvest: HarvestYield = { queryId: 0, to: roleAddr(s.wiring, ROLE_VAULT) };
-            createMessage({ bounce: BounceMode.NoBounce, dest: roleAddr(s.wiring, ROLE_ADAPTER), value: HARVEST_GAS, body: harvest }).send(SEND_MODE_REGULAR);
+            val harvest: HarvestYield = { queryId: 0, to: s.role(ROLE_VAULT) };
+            createMessage({ bounce: BounceMode.NoBounce, dest: s.role(ROLE_ADAPTER), value: HARVEST_GAS, body: harvest }).send(SEND_MODE_REGULAR);
 
             // Bounceable, unlike every other send here. drawOpen was just armed above,
             // and only a DrawResultMsg clears it - which never arrives if the draw never
@@ -211,12 +225,12 @@ fun onInternalMessage(in: InMessage) {
             // is the only signal that the draw did not start. Body is 128 bits, so the
             // cheapest mode carries it intact.
             val start: StartDraw = { queryId: 0, epoch: endedEpoch };
-            createMessage({ bounce: BounceMode.Only256BitsOfBody, dest: roleAddr(s.wiring, ROLE_DRAW_ENGINE), value: START_DRAW_GAS, body: start }).send(SEND_MODE_REGULAR);
+            createMessage({ bounce: BounceMode.Only256BitsOfBody, dest: s.role(ROLE_DRAW_ENGINE), value: START_DRAW_GAS, body: start }).send(SEND_MODE_REGULAR);
         }
 
         AdapterReportMsg => {
             var s = lazy PoolStorage.load();
-            assert (in.senderAddress == roleAddr(s.wiring, ROLE_ADAPTER)) throw ERR_UNAUTHORIZED;
+            assert (in.senderAddress == s.role(ROLE_ADAPTER)) throw ERR_UNAUTHORIZED;
             // harvested yield funds the prize pot
             if (msg.report.reportedOp == OP_HARVEST_YIELD && msg.report.success) {
                 s.prizePot += msg.report.yieldAmount;
@@ -236,9 +250,9 @@ fun onInternalMessage(in: InMessage) {
 
         DrawResultMsg => {
             var s = lazy PoolStorage.load();
-            assert (in.senderAddress == roleAddr(s.wiring, ROLE_DRAW_ENGINE)) throw ERR_UNAUTHORIZED;
-            val cfg = PoolConfig.fromCell(s.config);
-            val vault = roleAddr(s.wiring, ROLE_VAULT);
+            assert (in.senderAddress == s.role(ROLE_DRAW_ENGINE)) throw ERR_UNAUTHORIZED;
+            val cfg = s.cfg();
+            val vault = s.role(ROLE_VAULT);
 
             // The draw is settled the moment its result lands, whatever we then do
             // with the pot. This must be cleared before the eligible==0 branch below:
@@ -284,7 +298,7 @@ fun onInternalMessage(in: InMessage) {
             var s = lazy PoolStorage.load();
             assert (in.senderAddress == s.admin) throw ERR_UNAUTHORIZED;
             val fin: FinalizeDraw = { queryId: 0 };
-            createMessage({ bounce: BounceMode.NoBounce, dest: roleAddr(s.wiring, ROLE_DRAW_ENGINE), value: SETTLE_GAS, body: fin }).send(SEND_MODE_REGULAR);
+            createMessage({ bounce: BounceMode.NoBounce, dest: s.role(ROLE_DRAW_ENGINE), value: SETTLE_GAS, body: fin }).send(SEND_MODE_REGULAR);
         }
 
         ClearDrawOpen => {
@@ -306,7 +320,7 @@ fun onInternalMessage(in: InMessage) {
             // jettons, once in restored ledger weight. TON resolves a message in seconds, so
             // one epoch of wall clock is far past any real round trip while still bounded by
             // the governed config, which means demo timings shrink it automatically.
-            val cfg = PoolConfig.fromCell(s.config);
+            val cfg = s.cfg();
             assert (blockchain.now() >= rec.requestedAt + cfg.epochLength) throw ERR_RECLAIM_TOO_EARLY;
             s.restorePending(msg.queryId, rec);
             s.save();
@@ -314,15 +328,19 @@ fun onInternalMessage(in: InMessage) {
 
         ParamsUpdated => {
             var s = lazy PoolStorage.load();
-            assert (in.senderAddress == roleAddr(s.wiring, ROLE_GOVERNOR)) throw ERR_UNAUTHORIZED;
-            s.config = msg.config.toCell();
+            assert (in.senderAddress == s.role(ROLE_GOVERNOR)) throw ERR_UNAUTHORIZED;
+            var setup = PoolSetup.fromCell(s.setup);
+            setup.config = msg.config.toCell();
+            s.setup = setup.toCell();
             s.save();
         }
 
         ConfigureCore => {
             var s = lazy PoolStorage.load();
             assert (in.senderAddress == s.admin) throw ERR_UNAUTHORIZED;
-            s.wiring.set(msg.role, msg.addr);
+            var setup = PoolSetup.fromCell(s.setup);
+            setup.wiring.set(msg.role, msg.addr);
+            s.setup = setup.toCell();
             s.save();
         }
 
@@ -365,7 +383,7 @@ fun onBouncedMessage(in: InMessageBounced) {
 
 get fun get_config(): cell {
     val s = lazy PoolStorage.load();
-    return s.config;
+    return PoolSetup.fromCell(s.setup).config;
 }
 get fun get_pool_data(): (EpochId, uint32, coins, coins) {
     val s = lazy PoolStorage.load();
@@ -384,15 +402,15 @@ get fun get_participant_count(): int {
 }
 get fun get_total_weight(): coins {
     val s = lazy PoolStorage.load();
-    return eligibleWeight(s.ledger, s.currentEpoch, minHoldOf(s.config), false);
+    return eligibleWeight(s.ledger, s.currentEpoch, s.cfg().minHoldEpochs, false);
 }
 get fun get_odds(who: address): int {
     val s = lazy PoolStorage.load();
-    return oddsBps(s.ledger, who, s.currentEpoch, minHoldOf(s.config));
+    return oddsBps(s.ledger, who, s.currentEpoch, s.cfg().minHoldEpochs);
 }
 get fun preview_winner(word: uint256): address {
     val s = lazy PoolStorage.load();
-    return selectWinner(s.ledger, s.currentEpoch, minHoldOf(s.config), false, word);
+    return selectWinner(s.ledger, s.currentEpoch, s.cfg().minHoldEpochs, false, word);
 }
 // true from AdvanceEpoch (which opens a draw) until that draw's result lands.
 // AdvanceEpoch throws ERR_BUSY while set; the keeper reads this to know whether it

@@ -2,6 +2,7 @@ import { Blockchain, SandboxContract, TreasuryContract, internal } from '@ton/sa
 import { Cell, beginCell, contractAddress, Contract, ContractProvider, Sender, Address } from '@ton/core';
 import '@ton/test-utils';
 import { loadCode } from './helpers';
+import { poolSetup } from '../wrappers/protocol';
 
 const OP_TRANSFER_NOTIFICATION = 0x7362d09c;
 const OP_ADAPTER_REPORT = 0x10000034;
@@ -94,7 +95,7 @@ describe('C1 pool-core draw-result consumption + tiered payout', () => {
       .storeBit(false) // drawOpen: no draw outstanding at genesis
       .storeUint(0, 64) // withdrawNonce
       .storeAddress(admin.address)
-      .storeRef(packConfig(cfg)).storeBit(false).storeBit(false).storeBit(false).endCell() };
+      .storeRef(poolSetup(packConfig(cfg))).storeBit(false).storeBit(false).endCell() };
     pool = bc.openContract(new Pool(contractAddress(0, init), init));
     await pool.sendDeploy(admin.getSender());
     await pool.sendConfigure(admin.getSender(), ROLE_JETTON_WALLET, jw.address);

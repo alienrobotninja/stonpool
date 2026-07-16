@@ -2,6 +2,7 @@ import { Blockchain, SandboxContract, TreasuryContract, internal } from '@ton/sa
 import { Cell, beginCell, contractAddress, Contract, ContractProvider, Sender, Address } from '@ton/core';
 import '@ton/test-utils';
 import { loadCode } from './helpers';
+import { poolSetup } from '../wrappers/protocol';
 
 const OP_TRANSFER_NOTIFICATION = 0x7362d09c;
 const OP_REQUEST_WITHDRAW = 0x10000002;
@@ -92,8 +93,8 @@ describe('C1 pool-core withdraw path', () => {
       .storeUint(EPOCH, 32).storeUint(DEADLINE, 32).storeUint(T0, 32)
       .storeCoins(0).storeCoins(0)
       .storeBit(false).storeUint(0, 64).storeAddress(admin.address)
-      .storeRef(packConfig(cfg))
-      .storeBit(false).storeBit(false).storeBit(false)
+      .storeRef(poolSetup(packConfig(cfg)))
+      .storeBit(false).storeBit(false)
       .endCell();
   }
 
@@ -265,6 +266,18 @@ describe('C1 pool-core withdraw path', () => {
       const r = await ack(0, true, bob.address);
       expect(r.transactions).toHaveTransaction({ to: pool.address, success: false, exitCode: ERR_UNAUTHORIZED });
       expect((await pool.getPending(0)).who).toEqualAddress(alice.address);
+    });
+
+    it('the root storage cell keeps a ref free with every map populated', async () => {
+      pool = await fresh();
+      await deposit(1000n, alice.address);
+      await pool.sendWithdraw(alice.getSender(), 400n); // partial: ledger AND pending both hold entries
+      const root = ((await bc.getContract(pool.address)).accountState as any).state.data;
+      // setup + ledger + pending. TON caps a cell at 4 refs and there is no error until
+      // runtime: at 4/4 the next map to reach the root dies with a cell overflow, and the
+      // limit ends up deciding the design instead of the design deciding. Keep one spare.
+      expect(root.refs.length).toBe(3);
+      expect(root.bits.length).toBeLessThan(1023);
     });
   });
 

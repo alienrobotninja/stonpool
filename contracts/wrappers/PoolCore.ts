@@ -1,7 +1,7 @@
 import {
   Address, beginCell, Cell, Contract, contractAddress, ContractProvider, Sender, toNano,
 } from '@ton/core';
-import { OP, packConfig, PoolConfig } from './protocol';
+import { OP, packConfig, poolSetup, PoolConfig } from './protocol';
 
 export type PoolCoreConfig = {
   epoch: number;
@@ -21,10 +21,9 @@ export function poolCoreData(c: PoolCoreConfig): Cell {
     .storeBit(false) // drawOpen: no draw outstanding at genesis
     .storeUint(0, 64) // withdrawNonce
     .storeAddress(c.admin)
-    .storeRef(packConfig(c.config))
+    .storeRef(poolSetup(packConfig(c.config))) // config + wiring, folded to keep the root under 4 refs
     .storeBit(false)
-    .storeBit(false)
-    .storeBit(false) // empty wiring + ledger + pending maps
+    .storeBit(false) // empty ledger + pending maps
     .endCell();
 }
 

@@ -2,6 +2,7 @@ import { Blockchain, SandboxContract, TreasuryContract, internal } from '@ton/sa
 import { Cell, beginCell, contractAddress, Contract, ContractProvider, Sender, Address } from '@ton/core';
 import '@ton/test-utils';
 import { loadCode } from './helpers';
+import { poolSetup } from '../wrappers/protocol';
 
 const OP_TRANSFER_NOTIFICATION = 0x7362d09c;
 const OP_ADAPTER_REPORT = 0x10000034;
@@ -83,7 +84,7 @@ describe('C1 pool-core hardening + governor integration', () => {
     const init = { code, data: beginCell()
       .storeUint(JOIN, 32).storeUint(T0 + 100_000, 32).storeUint(T0, 32)
       .storeCoins(0).storeCoins(0).storeBit(false).storeUint(0, 64).storeAddress(admin.address)
-      .storeRef(packConfig(cfg)).storeBit(false).storeBit(false).storeBit(false).endCell() };
+      .storeRef(poolSetup(packConfig(cfg))).storeBit(false).storeBit(false).endCell() };
     const p = bc.openContract(new Pool(contractAddress(0, init), init));
     await p.sendDeploy(admin.getSender());
     await p.sendConfigure(admin.getSender(), ROLE_JETTON_WALLET, jw.address);
