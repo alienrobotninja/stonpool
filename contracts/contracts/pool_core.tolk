@@ -57,11 +57,16 @@ fun minHoldOf(config: Cell<PoolConfig>): uint16 {
 
 type AllowedMessage = JettonTransferNotification | RequestWithdraw | AdvanceEpoch | SettleDraw | ClearDrawOpen | AdapterReportMsg | DrawResultMsg | ParamsUpdated | ConfigureCore
 
-// StartDraw is currently the only send here that is not NoBounce, so it is the only
-// thing that can reach onBouncedMessage. Kept as a union anyway: if another send is
-// ever made bounceable, it must be added here deliberately rather than silently
-// falling through and being mistaken for a StartDraw.
-type BounceableMessage = StartDraw
+// Bounces are the only signal that a NoBounce-era send never happened. Every send
+// listed here must be deliberate: an unlisted bounceable send falls through to the
+// else arm and is silently ignored, and a mislisted one is mistaken for its neighbour.
+//
+// Both entries ride Only256BitsOfBody. StartDraw fits whole (128 bits). WithdrawPrincipal
+// does not - it is ~487 bits and the `to` address is truncated away - but the handler
+// never reads past queryId: the journal holds everything needed to undo the debit, so
+// the bounce only has to name the entry. `lazy` loads fields on demand, so the truncated
+// tail is never touched. See onBouncedMessage.
+type BounceableMessage = StartDraw | WithdrawPrincipal
 
 fun onInternalMessage(in: InMessage) {
     if (in.body.isEmpty()) { return; } // deploy
@@ -143,10 +148,16 @@ fun onInternalMessage(in: InMessage) {
             s.pending.set(qid, rec);
             s.save();
 
-            // adapter returns the principal jettons to the depositor
+            // adapter returns the principal jettons to the depositor. Bounceable: the
+            // adapter throws ERR_INSUFFICIENT_PRINCIPAL when its principal is short of
+            // what our ledger claims, and the bounce is what tells us the debit above
+            // never happened. Only256BitsOfBody truncates the body after ~256 bits, which
+            // is fine - onBouncedMessage reads only the queryId and recovers the rest from
+            // the journal - and it is the cheapest mode, which is what makes the bounce
+            // likely to actually fire on WITHDRAW_GAS.
             val adapter = roleAddr(s.wiring, ROLE_ADAPTER);
             val req: WithdrawPrincipal = { queryId: qid, amount: msg.amount, to: who };
-            createMessage({ bounce: BounceMode.NoBounce, dest: adapter, value: WITHDRAW_GAS, body: req }).send(SEND_MODE_REGULAR);
+            createMessage({ bounce: BounceMode.Only256BitsOfBody, dest: adapter, value: WITHDRAW_GAS, body: req }).send(SEND_MODE_REGULAR);
         }
 
         AdvanceEpoch => {
@@ -291,7 +302,7 @@ fun onInternalMessage(in: InMessage) {
 // A bounce means the destination threw before committing anything, so the action it
 // was asked to perform did not happen. Tolk rejects bounces with exit code 0 when this
 // entrypoint is absent, which is silent by construction - the failure mode Finding B
-// describes. Only StartDraw is bounceable; see AdvanceEpoch.
+// describes. See BounceableMessage for what reaches here and why.
 fun onBouncedMessage(in: InMessageBounced) {
     in.bouncedBody.skipBouncedPrefix();
     val msg = lazy BounceableMessage.fromSlice(in.bouncedBody);
@@ -302,6 +313,31 @@ fun onBouncedMessage(in: InMessageBounced) {
             // from a later transaction, and re-advancing is not what we want anyway.
             var s = lazy PoolStorage.load();
             s.drawOpen = false;
+            s.save();
+        }
+        WithdrawPrincipal => {
+            // The adapter refused, so the principal never left it and the debit we already
+            // committed is wrong. Restore from the journal, not from this message: the
+            // bounced body is truncated after 256 bits and its `to` and `amount` are gone,
+            // and even intact it never carried joinEpoch. queryId is all we need.
+            var s = lazy PoolStorage.load();
+            val found = s.pending.get(msg.queryId);
+            if (!found.isFound) { return; } // already reclaimed, or a bounce we did not journal
+            val rec = found.loadValue();
+
+            // Add back, never overwrite. A partial withdraw left the entry in place with
+            // its original joinEpoch; replacing it with the journal's copy would be a
+            // no-op today but would silently reset eligibility the moment a depositor
+            // tops up between the debit and the bounce. The journal's joinEpoch is only
+            // authoritative when the entry is gone, which is exactly when this default
+            // is the one that survives.
+            var entry: LedgerEntry = { weight: 0, joinEpoch: rec.joinEpoch };
+            val existing = s.ledger.get(rec.who);
+            if (existing.isFound) { entry = existing.loadValue(); }
+            entry.weight += rec.amount;
+            s.ledger.set(rec.who, entry);
+            s.totalPrincipal += rec.amount;
+            s.pending.delete(msg.queryId);
             s.save();
         }
         else => {}

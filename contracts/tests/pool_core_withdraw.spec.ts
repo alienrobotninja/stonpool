@@ -7,9 +7,11 @@ const OP_TRANSFER_NOTIFICATION = 0x7362d09c;
 const OP_REQUEST_WITHDRAW = 0x10000002;
 const OP_WITHDRAW_PRINCIPAL = 0x10000032;
 const OP_ADAPTER_REPORT = 0x10000034;
+const OP_CONFIGURE_ADAPTER = 0x10000071;
 const OP_CONFIGURE_CORE = 0x10000073;
 
 const ERR_UNAUTHORIZED = 401;
+const ERR_INSUFFICIENT_PRINCIPAL = 803; // mock_adapter: principal < requested
 const ERR_WITHDRAW_TOO_EARLY = 411;
 const ERR_NOTHING_TO_WITHDRAW = 412;
 
@@ -47,6 +49,7 @@ class Pool implements Contract {
     return { weight: s.readBigNumber(), joinEpoch: s.readBigNumber() };
   }
   async getCount(p: ContractProvider): Promise<bigint> { return (await p.get('get_participant_count', [])).stack.readBigNumber(); }
+  async getOdds(p: ContractProvider, who: Address): Promise<bigint> { return (await p.get('get_odds', [addrArg(who)])).stack.readBigNumber(); }
   async getPending(p: ContractProvider, queryId: number) {
     const s = (await p.get('get_pending', [{ type: 'int' as const, value: BigInt(queryId) }])).stack;
     return { who: s.readAddressOpt(), amount: s.readBigNumber(), joinEpoch: s.readBigNumber() };
@@ -256,6 +259,102 @@ describe('C1 pool-core withdraw path', () => {
       const r = await ack(0, true, bob.address);
       expect(r.transactions).toHaveTransaction({ to: pool.address, success: false, exitCode: ERR_UNAUTHORIZED });
       expect((await pool.getPending(0)).who).toEqualAddress(alice.address);
+    });
+  });
+
+  // Finding A, reproduced against the real adapter rather than a treasury stub. The
+  // ledger is credited without the adapter ever receiving the principal - the exact gap
+  // a failed deposit-forward opens - so the withdrawal it authorizes is one the adapter
+  // must refuse. Under NoBounce that refusal was silent and the depositor's claim was
+  // gone for good.
+  describe('bounced withdrawal restores the ledger', () => {
+    let mockAdapter: Address;
+
+    async function freshWithAdapter(cfg: Config = base) {
+      bc = await Blockchain.create();
+      bc.now = T0;
+      admin = await bc.treasury('admin');
+      jw = await bc.treasury('jw');
+      alice = await bc.treasury('alice');
+      bob = await bc.treasury('bob');
+      const adapterJw = await bc.treasury('adapterJw');
+
+      const init = { code, data: poolData(cfg) };
+      const p = bc.openContract(new Pool(contractAddress(0, init), init));
+      await p.sendDeploy(admin.getSender());
+
+      // principal: 0, so any WithdrawPrincipal it is asked for throws 803
+      const aInit = { code: loadCode('mock_adapter'), data: beginCell()
+        .storeAddress(admin.address).storeAddress(null).storeAddress(null).storeUint(0, 16).storeCoins(0).endCell() };
+      mockAdapter = contractAddress(0, aInit);
+      await bc.sendMessage(internal({ from: admin.address, to: mockAdapter, value: 1_000_000_000n, body: beginCell().endCell(), stateInit: aInit }));
+      await bc.sendMessage(internal({ from: admin.address, to: mockAdapter, value: 100_000_000n,
+        body: beginCell().storeUint(OP_CONFIGURE_ADAPTER, 32).storeUint(0, 64).storeAddress(p.address).storeAddress(adapterJw.address).endCell() }));
+
+      await p.sendConfigure(admin.getSender(), ROLE_JETTON_WALLET, jw.address);
+      await p.sendConfigure(admin.getSender(), ROLE_ADAPTER, mockAdapter);
+      return p;
+    }
+
+    it('the bounce lands at WITHDRAW_GAS and the adapter rejects for the right reason', async () => {
+      pool = await freshWithAdapter();
+      await deposit(1000n, alice.address);
+      const r = await pool.sendWithdraw(alice.getSender(), 1000n);
+      // the adapter must refuse because its principal is short, not because it is unwired
+      expect(r.transactions).toHaveTransaction({ from: pool.address, to: mockAdapter, success: false, exitCode: ERR_INSUFFICIENT_PRINCIPAL });
+      // and the bounce must actually make it home on WITHDRAW_GAS. If this is the
+      // assertion that fails, the constant is starving the bounce - report it, do not raise it.
+      expect(r.transactions).toHaveTransaction({ from: mockAdapter, to: pool.address, inMessageBounced: true, success: true });
+    });
+
+    it('a bounced full withdraw restores weight and the original joinEpoch', async () => {
+      pool = await freshWithAdapter();
+      await deposit(1000n, alice.address);
+      await pool.sendWithdraw(alice.getSender(), 1000n);
+      // the entry was deleted on debit, so joinEpoch here can only have come from the journal
+      expect(await pool.getBalanceOf(alice.address)).toEqual({ weight: 1000n, joinEpoch: BigInt(EPOCH) });
+      expect((await pool.getData()).totalPrincipal).toBe(1000n);
+      expect(await pool.getCount()).toBe(1n);
+    });
+
+    it('a bounced partial withdraw adds back and preserves the surviving joinEpoch', async () => {
+      pool = await freshWithAdapter();
+      await deposit(1000n, alice.address);
+      await pool.sendWithdraw(alice.getSender(), 400n);
+      // 600 stayed with joinEpoch EPOCH; the handler must add 400 to it, not replace it
+      expect(await pool.getBalanceOf(alice.address)).toEqual({ weight: 1000n, joinEpoch: BigInt(EPOCH) });
+      expect((await pool.getData()).totalPrincipal).toBe(1000n);
+    });
+
+    it('the journal entry is consumed by the restore', async () => {
+      pool = await freshWithAdapter();
+      await deposit(1000n, alice.address);
+      await pool.sendWithdraw(alice.getSender(), 1000n);
+      expect((await pool.getPending(0)).who).toBeNull();
+      expect(await pool.getNonce()).toBe(1n); // consumed, not rewound: the key is never reused
+    });
+
+    it('odds are identical either side of a bounced round trip', async () => {
+      pool = await freshWithAdapter({ ...base, minHoldEpochs: 0 });
+      await deposit(1000n, alice.address);
+      await deposit(3000n, bob.address);
+      const before = await pool.getOdds(alice.address);
+      await pool.sendWithdraw(alice.getSender(), 1000n);
+      expect(await pool.getOdds(alice.address)).toBe(before); // 2500 bps
+      expect(await pool.getOdds(bob.address)).toBe(7500n);
+    });
+
+    it('a bounce naming an unknown entry is a no-op', async () => {
+      pool = await freshWithAdapter();
+      await deposit(1000n, alice.address);
+      await pool.sendWithdraw(alice.getSender(), 1000n); // journal entry 0, bounced and consumed
+      // replaying that same bounce must not credit alice a second time
+      const body = beginCell().storeUint(0xffffffff, 32)
+        .storeSlice(withdrawPrincipalBody(0, 1000n, alice.address).beginParse()).endCell();
+      const r = await bc.sendMessage(internal({ from: mockAdapter, to: pool.address, value: 50_000_000n, body, bounced: true }));
+      expect(r.transactions).toHaveTransaction({ to: pool.address, success: true });
+      expect((await pool.getBalanceOf(alice.address)).weight).toBe(1000n);
+      expect((await pool.getData()).totalPrincipal).toBe(1000n);
     });
   });
 });
