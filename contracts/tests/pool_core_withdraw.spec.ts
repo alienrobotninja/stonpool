@@ -7,6 +7,7 @@ const OP_TRANSFER_NOTIFICATION = 0x7362d09c;
 const OP_REQUEST_WITHDRAW = 0x10000002;
 const OP_WITHDRAW_PRINCIPAL = 0x10000032;
 const OP_ADAPTER_REPORT = 0x10000034;
+const OP_RECLAIM_WITHDRAW = 0x10000018;
 const OP_CONFIGURE_ADAPTER = 0x10000071;
 const OP_CONFIGURE_CORE = 0x10000073;
 
@@ -14,6 +15,7 @@ const ERR_UNAUTHORIZED = 401;
 const ERR_INSUFFICIENT_PRINCIPAL = 803; // mock_adapter: principal < requested
 const ERR_WITHDRAW_TOO_EARLY = 411;
 const ERR_NOTHING_TO_WITHDRAW = 412;
+const ERR_RECLAIM_TOO_EARLY = 413;
 
 const ROLE_JETTON_WALLET = 0;
 const ROLE_ADAPTER = 1;
@@ -52,7 +54,11 @@ class Pool implements Contract {
   async getOdds(p: ContractProvider, who: Address): Promise<bigint> { return (await p.get('get_odds', [addrArg(who)])).stack.readBigNumber(); }
   async getPending(p: ContractProvider, queryId: number) {
     const s = (await p.get('get_pending', [{ type: 'int' as const, value: BigInt(queryId) }])).stack;
-    return { who: s.readAddressOpt(), amount: s.readBigNumber(), joinEpoch: s.readBigNumber() };
+    return { who: s.readAddressOpt(), amount: s.readBigNumber(), joinEpoch: s.readBigNumber(), requestedAt: s.readBigNumber() };
+  }
+  async getPendingCount(p: ContractProvider): Promise<bigint> { return (await p.get('get_pending_count', [])).stack.readBigNumber(); }
+  async sendReclaim(p: ContractProvider, via: Sender, queryId: number) {
+    await p.internal(via, { value: 100_000_000n, body: beginCell().storeUint(OP_RECLAIM_WITHDRAW, 32).storeUint(queryId, 64).endCell() });
   }
   async getNonce(p: ContractProvider): Promise<bigint> { return (await p.get('get_withdraw_nonce', [])).stack.readBigNumber(); }
 }
@@ -63,7 +69,7 @@ const withdrawPrincipalBody = (queryId: number, amount: bigint, to: Address) =>
 
 // Address carries methods, so toEqual on a whole record compares functions too and
 // fails with "serializes to the same string" even when the values match
-function expectPending(got: { who: Address | null; amount: bigint; joinEpoch: bigint }, who: Address, amount: bigint, joinEpoch: number) {
+function expectPending(got: { who: Address | null; amount: bigint; joinEpoch: bigint; requestedAt: bigint }, who: Address, amount: bigint, joinEpoch: number) {
   expect(got.who).toEqualAddress(who);
   expect(got.amount).toBe(amount);
   expect(got.joinEpoch).toBe(BigInt(joinEpoch));
@@ -355,6 +361,111 @@ describe('C1 pool-core withdraw path', () => {
       expect(r.transactions).toHaveTransaction({ to: pool.address, success: true });
       expect((await pool.getBalanceOf(alice.address)).weight).toBe(1000n);
       expect((await pool.getData()).totalPrincipal).toBe(1000n);
+    });
+  });
+
+  // The branch that makes Option B fund-loss-free: neither ack nor bounce ever arrives.
+  // The treasury adapter is the right stub here precisely because it swallows the message
+  // and answers nothing - that is the scenario.
+  describe('reclaim of an unanswered withdrawal', () => {
+    const EPOCH_LENGTH = base.epochLength;
+    const past = (secs: number) => { bc.now = T0 + secs; };
+
+    it('a journaled withdrawal is visible and counted while it is open', async () => {
+      pool = await fresh();
+      await deposit(1000n, alice.address);
+      expect(await pool.getPendingCount()).toBe(0n);
+      await pool.sendWithdraw(alice.getSender(), 1000n);
+      expect(await pool.getPendingCount()).toBe(1n);
+      expect((await pool.getPending(0)).requestedAt).toBe(BigInt(T0));
+    });
+
+    it('reclaim before a full epoch has passed is refused (413)', async () => {
+      pool = await fresh();
+      await deposit(1000n, alice.address);
+      await pool.sendWithdraw(alice.getSender(), 1000n);
+      past(EPOCH_LENGTH - 1); // one second short
+      const r = await pool.sendReclaim(alice.getSender(), 0);
+      expect(r.transactions).toHaveTransaction({ to: pool.address, success: false, exitCode: ERR_RECLAIM_TOO_EARLY });
+      expect((await pool.getPending(0)).who).toEqualAddress(alice.address); // still owed
+      expect((await pool.getBalanceOf(alice.address)).weight).toBe(0n); // and still debited
+    });
+
+    it('reclaim after the threshold restores the ledger exactly', async () => {
+      pool = await fresh();
+      await deposit(1000n, alice.address);
+      await pool.sendWithdraw(alice.getSender(), 1000n);
+      past(EPOCH_LENGTH);
+      await pool.sendReclaim(alice.getSender(), 0);
+      expect(await pool.getBalanceOf(alice.address)).toEqual({ weight: 1000n, joinEpoch: BigInt(EPOCH) });
+      expect((await pool.getData()).totalPrincipal).toBe(1000n);
+      expect(await pool.getPendingCount()).toBe(0n);
+    });
+
+    it('reclaim adds back to a partial withdrawer rather than replacing them', async () => {
+      pool = await fresh();
+      await deposit(1000n, alice.address);
+      await pool.sendWithdraw(alice.getSender(), 400n);
+      past(EPOCH_LENGTH);
+      await pool.sendReclaim(alice.getSender(), 0);
+      expect(await pool.getBalanceOf(alice.address)).toEqual({ weight: 1000n, joinEpoch: BigInt(EPOCH) });
+    });
+
+    it('reclaim is idempotent: a second call credits nothing', async () => {
+      pool = await fresh();
+      await deposit(1000n, alice.address);
+      await pool.sendWithdraw(alice.getSender(), 1000n);
+      past(EPOCH_LENGTH);
+      await pool.sendReclaim(alice.getSender(), 0);
+      const r = await pool.sendReclaim(alice.getSender(), 0);
+      expect(r.transactions).toHaveTransaction({ to: pool.address, success: true });
+      expect((await pool.getBalanceOf(alice.address)).weight).toBe(1000n); // not 2000
+      expect((await pool.getData()).totalPrincipal).toBe(1000n);
+    });
+
+    it('reclaim of an entry that never existed is a safe no-op', async () => {
+      pool = await fresh();
+      await deposit(1000n, alice.address);
+      past(EPOCH_LENGTH);
+      const r = await pool.sendReclaim(alice.getSender(), 99);
+      expect(r.transactions).toHaveTransaction({ to: pool.address, success: true });
+      expect((await pool.getBalanceOf(alice.address)).weight).toBe(1000n);
+    });
+
+    it('anyone can crank a reclaim, and it credits the journal, not the caller', async () => {
+      pool = await fresh();
+      await deposit(1000n, alice.address);
+      await pool.sendWithdraw(alice.getSender(), 1000n);
+      past(EPOCH_LENGTH);
+      await pool.sendReclaim(bob.getSender(), 0); // bob is a stranger to this withdrawal
+      expect((await pool.getBalanceOf(alice.address)).weight).toBe(1000n);
+      expect((await pool.getBalanceOf(bob.address)).weight).toBe(0n);
+    });
+
+    it('an ack that arrives after a reclaim does not double-credit', async () => {
+      pool = await fresh();
+      await deposit(1000n, alice.address);
+      await pool.sendWithdraw(alice.getSender(), 1000n);
+      past(EPOCH_LENGTH);
+      await pool.sendReclaim(alice.getSender(), 0);
+      // the entry is gone, so the late ack has nothing to clear and nothing to undo
+      await bc.sendMessage(internal({ from: adapter.address, to: pool.address, value: 100_000_000n,
+        body: beginCell().storeUint(OP_ADAPTER_REPORT, 32).storeUint(0, 64)
+          .storeUint(OP_WITHDRAW_PRINCIPAL, 32).storeCoins(0).storeCoins(0).storeBit(true).endCell() }));
+      expect((await pool.getBalanceOf(alice.address)).weight).toBe(1000n);
+    });
+
+    it('the count tracks several open withdrawals independently', async () => {
+      pool = await fresh();
+      await deposit(1000n, alice.address);
+      await deposit(2000n, bob.address);
+      await pool.sendWithdraw(alice.getSender(), 1000n);
+      await pool.sendWithdraw(bob.getSender(), 2000n);
+      expect(await pool.getPendingCount()).toBe(2n);
+      past(EPOCH_LENGTH);
+      await pool.sendReclaim(alice.getSender(), 0);
+      expect(await pool.getPendingCount()).toBe(1n);
+      expect((await pool.getPending(1)).who).toEqualAddress(bob.address);
     });
   });
 });

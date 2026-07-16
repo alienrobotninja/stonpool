@@ -45,6 +45,23 @@ struct PoolStorage {
 fun PoolStorage.load() { return PoolStorage.fromCell(contract.getData()) }
 fun PoolStorage.save(self) { contract.setData(self.toCell()) }
 
+// Undo a journaled debit: put the amount back on the ledger and drop the record. The
+// bounce handler and reclaim are the same operation reached two ways - the adapter said
+// no, or the adapter never said anything - so they must not drift apart.
+//
+// Add back, never overwrite. A partial withdraw left the entry in place with its own
+// joinEpoch; the journal's copy is only authoritative when the entry is gone, which is
+// exactly when this default is the one that survives. Same shape as the deposit path.
+fun PoolStorage.restorePending(mutate self, queryId: uint64, rec: PendingWithdraw) {
+    var entry: LedgerEntry = { weight: 0, joinEpoch: rec.joinEpoch };
+    val existing = self.ledger.get(rec.who);
+    if (existing.isFound) { entry = existing.loadValue(); }
+    entry.weight += rec.amount;
+    self.ledger.set(rec.who, entry);
+    self.totalPrincipal += rec.amount;
+    self.pending.delete(queryId);
+}
+
 fun roleAddr(wiring: map<uint8, address>, role: uint8): address {
     val r = wiring.get(role);
     assert (r.isFound) throw ERR_NOT_CONFIGURED;
@@ -55,7 +72,7 @@ fun minHoldOf(config: Cell<PoolConfig>): uint16 {
     return PoolConfig.fromCell(config).minHoldEpochs;
 }
 
-type AllowedMessage = JettonTransferNotification | RequestWithdraw | AdvanceEpoch | SettleDraw | ClearDrawOpen | AdapterReportMsg | DrawResultMsg | ParamsUpdated | ConfigureCore
+type AllowedMessage = JettonTransferNotification | RequestWithdraw | AdvanceEpoch | SettleDraw | ClearDrawOpen | ReclaimWithdraw | AdapterReportMsg | DrawResultMsg | ParamsUpdated | ConfigureCore
 
 // Bounces are the only signal that a NoBounce-era send never happened. Every send
 // listed here must be deliberate: an unlisted bounceable send falls through to the
@@ -144,7 +161,7 @@ fun onInternalMessage(in: InMessage) {
             // monotonic nonce round-trips just as well and cannot collide.
             val qid = s.withdrawNonce;
             s.withdrawNonce += 1;
-            val rec: PendingWithdraw = { who: who, amount: msg.amount, joinEpoch: entry.joinEpoch };
+            val rec: PendingWithdraw = { who: who, amount: msg.amount, joinEpoch: entry.joinEpoch, requestedAt: blockchain.now() as uint32 };
             s.pending.set(qid, rec);
             s.save();
 
@@ -279,6 +296,22 @@ fun onInternalMessage(in: InMessage) {
             s.save();
         }
 
+        ReclaimWithdraw => {
+            var s = lazy PoolStorage.load();
+            val found = s.pending.get(msg.queryId);
+            if (!found.isFound) { return; } // already acked, bounced or reclaimed: idempotent
+            val rec = found.loadValue();
+            // The age gate is the whole safety of this path. Reclaim before the adapter has
+            // answered and a withdrawal that then succeeds pays the depositor twice: once in
+            // jettons, once in restored ledger weight. TON resolves a message in seconds, so
+            // one epoch of wall clock is far past any real round trip while still bounded by
+            // the governed config, which means demo timings shrink it automatically.
+            val cfg = PoolConfig.fromCell(s.config);
+            assert (blockchain.now() >= rec.requestedAt + cfg.epochLength) throw ERR_RECLAIM_TOO_EARLY;
+            s.restorePending(msg.queryId, rec);
+            s.save();
+        }
+
         ParamsUpdated => {
             var s = lazy PoolStorage.load();
             assert (in.senderAddress == roleAddr(s.wiring, ROLE_GOVERNOR)) throw ERR_UNAUTHORIZED;
@@ -323,21 +356,7 @@ fun onBouncedMessage(in: InMessageBounced) {
             var s = lazy PoolStorage.load();
             val found = s.pending.get(msg.queryId);
             if (!found.isFound) { return; } // already reclaimed, or a bounce we did not journal
-            val rec = found.loadValue();
-
-            // Add back, never overwrite. A partial withdraw left the entry in place with
-            // its original joinEpoch; replacing it with the journal's copy would be a
-            // no-op today but would silently reset eligibility the moment a depositor
-            // tops up between the debit and the bounce. The journal's joinEpoch is only
-            // authoritative when the entry is gone, which is exactly when this default
-            // is the one that survives.
-            var entry: LedgerEntry = { weight: 0, joinEpoch: rec.joinEpoch };
-            val existing = s.ledger.get(rec.who);
-            if (existing.isFound) { entry = existing.loadValue(); }
-            entry.weight += rec.amount;
-            s.ledger.set(rec.who, entry);
-            s.totalPrincipal += rec.amount;
-            s.pending.delete(msg.queryId);
+            s.restorePending(msg.queryId, found.loadValue());
             s.save();
         }
         else => {}
@@ -385,12 +404,25 @@ get fun get_draw_open(): bool {
 // A withdrawal that has been debited but not yet acked. Non-empty means the adapter
 // still owes the payout; an entry that outlives its round trip is a stuck withdrawal
 // and the ground truth to restore the ledger from. found=false for an unknown key.
-get fun get_pending(queryId: uint64): (address?, coins, EpochId) {
+get fun get_pending(queryId: uint64): (address?, coins, EpochId, Timestamp) {
     val s = lazy PoolStorage.load();
     val r = s.pending.get(queryId);
-    if (!r.isFound) { return (null, 0, 0); }
+    if (!r.isFound) { return (null, 0, 0, 0); }
     val p = r.loadValue();
-    return (p.who, p.amount, p.joinEpoch);
+    return (p.who, p.amount, p.joinEpoch, p.requestedAt);
+}
+// Open withdrawals the adapter has not answered. Steady state is 0; a number that
+// stays above 0 across epochs is the indexer's signal that something is stuck and a
+// reclaim is due. No map size primitive in Tolk, so this iterates like participantCount.
+get fun get_pending_count(): int {
+    val s = lazy PoolStorage.load();
+    var n = 0;
+    var r = s.pending.findFirst();
+    while (r.isFound) {
+        n += 1;
+        r = s.pending.iterateNext(r);
+    }
+    return n;
 }
 // next queryId RequestWithdraw will assign; also the count of withdrawals ever journaled
 get fun get_withdraw_nonce(): uint64 {
