@@ -13,7 +13,6 @@ const OP_VAULT_CREDIT = 0x10000006;
 const ERR_UNAUTHORIZED = 401;
 const ERR_WRONG_SENDER = 402;
 const ERR_NOT_CONFIGURED = 804;
-const ERR_INSUFFICIENT_POT = 805;
 
 const POT = 5_000_000n;
 
@@ -182,11 +181,24 @@ describe('C4 jetton-vault (prize-pot custody)', () => {
     expect(r.transactions).toHaveTransaction({ to: vault.address, success: false, exitCode: ERR_UNAUTHORIZED });
   });
 
-  it('payout exceeding the pot reverts (805) and leaves the pot intact', async () => {
+  it('payout exceeding the pot pays what is there rather than reverting', async () => {
     await setup({ fund: true });
     const r = await vault.sendPayout(poolCore.getSender(), winner.address, POT + 1n);
-    expect(r.transactions).toHaveTransaction({ to: vault.address, success: false, exitCode: ERR_INSUFFICIENT_POT });
-    expect((await vault.getData()).pot).toBe(POT);
+    // pool-core has already zeroed prizePot and these sends are NoBounce, so a throw here
+    // would strand the pot and pay nobody. Short-pay the winner and keep the vault solvent.
+    expect(r.transactions).toHaveTransaction({ to: vault.address, success: true });
+    expect((await vault.getData()).pot).toBe(0n);
+    expect(await bc.openContract(new Reader(walletOf(winner.address))).getBalance()).toBe(POT);
+  });
+
+  it('a payout against an empty pot is a no-op, not a failure', async () => {
+    await setup({ fund: true });
+    await vault.sendPayout(poolCore.getSender(), winner.address, POT); // drain it
+    const r = await vault.sendPayout(poolCore.getSender(), winner.address, 1_000n);
+    expect(r.transactions).toHaveTransaction({ to: vault.address, success: true });
+    expect((await vault.getData()).pot).toBe(0n);
+    // clamped to zero: no transfer emitted at all rather than a 0-jetton send
+    expect(r.transactions).not.toHaveTransaction({ from: vault.address, to: vaultWallet });
   });
 
   it('payout on an unconfigured vault reverts (804)', async () => {
