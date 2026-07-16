@@ -86,7 +86,7 @@ fun PoolStorage.role(self, role: uint8): address {
     return roleAddr(PoolSetup.fromCell(self.setup).wiring, role);
 }
 
-type AllowedMessage = JettonTransferNotification | RequestWithdraw | AdvanceEpoch | SettleDraw | ClearDrawOpen | ReclaimWithdraw | AdapterReportMsg | DrawResultMsg | ParamsUpdated | ConfigureCore
+type AllowedMessage = JettonTransferNotification | RequestWithdraw | AdvanceEpoch | SettleDraw | ClearDrawOpen | ReclaimWithdraw | AdapterReportMsg | VaultCredit | DrawResultMsg | ParamsUpdated | ConfigureCore
 
 // Bounces are the only signal that a NoBounce-era send never happened. Every send
 // listed here must be deliberate: an unlisted bounceable send falls through to the
@@ -231,12 +231,12 @@ fun onInternalMessage(in: InMessage) {
         AdapterReportMsg => {
             var s = lazy PoolStorage.load();
             assert (in.senderAddress == s.role(ROLE_ADAPTER)) throw ERR_UNAUTHORIZED;
-            // harvested yield funds the prize pot
-            if (msg.report.reportedOp == OP_HARVEST_YIELD && msg.report.success) {
-                s.prizePot += msg.report.yieldAmount;
-                s.save();
-                return;
-            }
+            // The harvest report is informational now. It carries netYield, computed from a
+            // grossYield the keeper passed in before STON.fi executed the burn - an estimate
+            // of a trade, not its settlement. Crediting prizePot from it is what put pool-core
+            // and the vault on two different numbers. The vault reports the jettons that
+            // actually land (VaultCredit); this report is kept only as the harvest ack.
+            if (msg.report.reportedOp == OP_HARVEST_YIELD) { return; }
             // The withdraw ack is the journal's normal exit: the adapter has redeemed and
             // paid out, so the record has done its job. Both adapters echo the queryId we
             // sent (mock line 96, stonfi line 216), which is the map key. An unknown key is
@@ -246,6 +246,13 @@ fun onInternalMessage(in: InMessage) {
                 s.pending.delete(msg.queryId);
                 s.save();
             }
+        }
+
+        VaultCredit => {
+            var s = lazy PoolStorage.load();
+            assert (in.senderAddress == s.role(ROLE_VAULT)) throw ERR_UNAUTHORIZED;
+            s.prizePot += msg.amount;
+            s.save();
         }
 
         DrawResultMsg => {

@@ -8,6 +8,7 @@ const OP_INTERNAL_TRANSFER = 0x178d4519;
 const OP_MINT = 0x00000015;
 const OP_PAYOUT = 0x10000005;
 const OP_CONFIGURE_VAULT = 0x10000072;
+const OP_VAULT_CREDIT = 0x10000006;
 
 const ERR_UNAUTHORIZED = 401;
 const ERR_WRONG_SENDER = 402;
@@ -119,6 +120,39 @@ describe('C4 jetton-vault (prize-pot custody)', () => {
     await setup({ configure: true });
     await creditPot(POT);
     expect((await vault.getData()).pot).toBe(POT);
+  });
+
+  it('a credited notification reports the landed amount to pool-core', async () => {
+    await setup();
+    const r = await creditPot(10_000n);
+    // pool-core's prizePot is only as true as this message. The vault knows what arrived;
+    // the adapter only knew what it expected to arrive.
+    expect(r.transactions).toHaveTransaction({
+      from: vault.address, to: poolCore.address,
+      body: beginCell().storeUint(OP_VAULT_CREDIT, 32).storeUint(0, 64).storeCoins(10_000n).endCell(),
+    });
+  });
+
+  it('the report carries the amount that landed, not a running total', async () => {
+    await setup();
+    await creditPot(4_000n);
+    const r = await creditPot(6_000n);
+    // deltas commute with an in-flight payout; an absolute balance would not
+    expect(r.transactions).toHaveTransaction({
+      from: vault.address, to: poolCore.address,
+      body: beginCell().storeUint(OP_VAULT_CREDIT, 32).storeUint(0, 64).storeCoins(6_000n).endCell(),
+    });
+    expect((await vault.getData()).pot).toBe(10_000n);
+  });
+
+  it('an unwired pool-core does not stop the pot being credited', async () => {
+    // configure sets both, so drive the wallet-only case directly: the credit must land
+    // even when there is nobody to tell about it
+    await setup({ configure: false });
+    await vault.sendConfigure(admin.getSender(), poolCore.address, vaultWallet);
+    const r = await creditPot(10_000n);
+    expect(r.transactions).toHaveTransaction({ to: vault.address, success: true });
+    expect((await vault.getData()).pot).toBe(10_000n);
   });
 
   it('a notification from a non-wallet sender reverts (402)', async () => {
