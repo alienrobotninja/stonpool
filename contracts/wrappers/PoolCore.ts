@@ -19,10 +19,12 @@ export function poolCoreData(c: PoolCoreConfig): Cell {
     .storeCoins(0)
     .storeCoins(0)
     .storeBit(false) // drawOpen: no draw outstanding at genesis
+    .storeUint(0, 64) // withdrawNonce
     .storeAddress(c.admin)
     .storeRef(packConfig(c.config))
     .storeBit(false)
     .storeBit(false)
+    .storeBit(false) // empty wiring + ledger + pending maps
     .endCell();
 }
 

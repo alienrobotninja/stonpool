@@ -97,6 +97,17 @@ struct AdapterReport {
     success: bool
 }
 
+// pool-core's journal entry for a withdrawal in flight: written in the same
+// transaction as the ledger debit, cleared when the adapter acks. joinEpoch is
+// here because a full withdraw deletes the ledger entry, and nothing else on
+// chain remembers it afterwards. If neither an ack nor a bounce ever lands, this
+// record is what the withdrawal is reconstructed from.
+struct PendingWithdraw {
+    who: address
+    amount: coins
+    joinEpoch: EpochId
+}
+
 // draw-engine -> pool-core once the seed is finalized.
 struct DrawResult {
     epoch: uint32

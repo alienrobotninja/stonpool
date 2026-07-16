@@ -34,10 +34,12 @@ struct PoolStorage {
     totalPrincipal: coins
     prizePot: coins
     drawOpen: bool
+    withdrawNonce: uint64
     admin: address
     config: Cell<PoolConfig>
     wiring: map<uint8, address>
     ledger: Ledger
+    pending: map<uint64, PendingWithdraw>
 }
 
 fun PoolStorage.load() { return PoolStorage.fromCell(contract.getData()) }
@@ -123,11 +125,27 @@ fun onInternalMessage(in: InMessage) {
                 s.ledger.set(who, e2);
             }
             s.totalPrincipal -= msg.amount;
+
+            // Journal the debit in the same transaction that performs it. The send below
+            // is NoBounce and the adapter throws ERR_INSUFFICIENT_PRINCIPAL on a shortfall,
+            // so without this the debit is unrecoverable: the ledger entry (and with it
+            // joinEpoch) is gone and the jettons never come back. This record is written
+            // atomically with the debit, so it cannot be missed the way a bounce can.
+            //
+            // The key is ours, not the caller's. msg.queryId is caller-supplied, and a map
+            // keyed on it lets two withdrawals pick the same key and silently overwrite
+            // each other's journal entry - the exact loss this is meant to prevent. The
+            // adapter echoes whatever queryId we send back on the report, so a private
+            // monotonic nonce round-trips just as well and cannot collide.
+            val qid = s.withdrawNonce;
+            s.withdrawNonce += 1;
+            val rec: PendingWithdraw = { who: who, amount: msg.amount, joinEpoch: entry.joinEpoch };
+            s.pending.set(qid, rec);
             s.save();
 
             // adapter returns the principal jettons to the depositor
             val adapter = roleAddr(s.wiring, ROLE_ADAPTER);
-            val req: WithdrawPrincipal = { queryId: msg.queryId, amount: msg.amount, to: who };
+            val req: WithdrawPrincipal = { queryId: qid, amount: msg.amount, to: who };
             createMessage({ bounce: BounceMode.NoBounce, dest: adapter, value: WITHDRAW_GAS, body: req }).send(SEND_MODE_REGULAR);
         }
 
@@ -171,9 +189,19 @@ fun onInternalMessage(in: InMessage) {
         AdapterReportMsg => {
             var s = lazy PoolStorage.load();
             assert (in.senderAddress == roleAddr(s.wiring, ROLE_ADAPTER)) throw ERR_UNAUTHORIZED;
-            // harvested yield funds the prize pot; other reports just confirm ledger moves
+            // harvested yield funds the prize pot
             if (msg.report.reportedOp == OP_HARVEST_YIELD && msg.report.success) {
                 s.prizePot += msg.report.yieldAmount;
+                s.save();
+                return;
+            }
+            // The withdraw ack is the journal's normal exit: the adapter has redeemed and
+            // paid out, so the record has done its job. Both adapters echo the queryId we
+            // sent (mock line 96, stonfi line 216), which is the map key. An unknown key is
+            // a no-op - delete returns false rather than throwing - so a duplicate or
+            // spurious report cannot brick the handler.
+            if (msg.report.reportedOp == OP_WITHDRAW_PRINCIPAL && msg.report.success) {
+                s.pending.delete(msg.queryId);
                 s.save();
             }
         }
@@ -317,6 +345,21 @@ get fun preview_winner(word: uint256): address {
 get fun get_draw_open(): bool {
     val s = lazy PoolStorage.load();
     return s.drawOpen;
+}
+// A withdrawal that has been debited but not yet acked. Non-empty means the adapter
+// still owes the payout; an entry that outlives its round trip is a stuck withdrawal
+// and the ground truth to restore the ledger from. found=false for an unknown key.
+get fun get_pending(queryId: uint64): (address?, coins, EpochId) {
+    val s = lazy PoolStorage.load();
+    val r = s.pending.get(queryId);
+    if (!r.isFound) { return (null, 0, 0); }
+    val p = r.loadValue();
+    return (p.who, p.amount, p.joinEpoch);
+}
+// next queryId RequestWithdraw will assign; also the count of withdrawals ever journaled
+get fun get_withdraw_nonce(): uint64 {
+    val s = lazy PoolStorage.load();
+    return s.withdrawNonce;
 }
 // the coupled gas budget from "gas", exposed so tests assert against the values the
 // contract actually ships rather than hardcoding their own copies

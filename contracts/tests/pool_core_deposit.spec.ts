@@ -66,9 +66,9 @@ describe('C1 pool-core deposit path + reads', () => {
     return beginCell()
       .storeUint(EPOCH, 32).storeUint(DEADLINE, 32).storeUint(T0, 32)
       .storeCoins(0).storeCoins(0)
-      .storeBit(false).storeAddress(admin.address)
+      .storeBit(false).storeUint(0, 64).storeAddress(admin.address)
       .storeRef(packConfig(CFG))
-      .storeBit(false).storeBit(false) // empty wiring + ledger maps
+      .storeBit(false).storeBit(false).storeBit(false) // empty wiring + ledger + pending maps
       .endCell();
   }
 

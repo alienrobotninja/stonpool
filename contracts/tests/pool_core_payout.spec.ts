@@ -92,8 +92,9 @@ describe('C1 pool-core draw-result consumption + tiered payout', () => {
       .storeUint(JOIN, 32).storeUint(T0 + 100_000, 32).storeUint(T0, 32)
       .storeCoins(0).storeCoins(0)
       .storeBit(false) // drawOpen: no draw outstanding at genesis
+      .storeUint(0, 64) // withdrawNonce
       .storeAddress(admin.address)
-      .storeRef(packConfig(cfg)).storeBit(false).storeBit(false).endCell() };
+      .storeRef(packConfig(cfg)).storeBit(false).storeBit(false).storeBit(false).endCell() };
     pool = bc.openContract(new Pool(contractAddress(0, init), init));
     await pool.sendDeploy(admin.getSender());
     await pool.sendConfigure(admin.getSender(), ROLE_JETTON_WALLET, jw.address);

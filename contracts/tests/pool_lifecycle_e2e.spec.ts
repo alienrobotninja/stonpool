@@ -99,7 +99,7 @@ describe('Full pool lifecycle e2e: deposit -> harvest -> draw -> payout -> withd
     // deploy pool-core
     const pInit = { code: loadCode('pool_core'), data: beginCell()
       .storeUint(EPOCH, 32).storeUint(T0 + EPOCH_LENGTH - DEPOSIT_CUTOFF, 32).storeUint(T0, 32)
-      .storeCoins(0).storeCoins(0).storeBit(false).storeAddress(admin.address).storeRef(packConfig(CFG)).storeBit(false).storeBit(false).endCell() };
+      .storeCoins(0).storeCoins(0).storeBit(false).storeUint(0, 64).storeAddress(admin.address).storeRef(packConfig(CFG)).storeBit(false).storeBit(false).storeBit(false).endCell() };
     pool = contractAddress(0, pInit);
     await bc.sendMessage(internal({ from: admin.address, to: pool, value: toNano('5'), body: beginCell().endCell(), stateInit: pInit }));
 
