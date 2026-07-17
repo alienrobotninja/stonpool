@@ -38,9 +38,9 @@ fun onInternalMessage(in: InMessage) {
             // above is already committed: if the yield arrives with too little gas to relay
             // the report, the jettons are still ours and still in the pot, and the pot must
             // not un-credit itself over a message it could not afford. A report lost that
-            // way leaves prizePot short of potBalance - visible, safe, and what SyncPot is
-            // for. The reverse, prizePot ahead of potBalance, is the one that loses prizes,
-            // and this ordering makes it unreachable.
+            // way leaves prizePot short of potBalance - visible, safe, and never distributed.
+            // The reverse, prizePot ahead of potBalance, is the one that loses prizes, and
+            // this ordering makes it unreachable.
             if (s.poolCore != null) {
                 val credit: VaultCredit = { queryId: 0, amount: msg.amount };
                 createMessage({ bounce: BounceMode.NoBounce, dest: s.poolCore!, value: 0, body: credit })
