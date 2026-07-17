@@ -2,9 +2,11 @@ import { Blockchain, SandboxContract, TreasuryContract, internal } from '@ton/sa
 import { Cell, beginCell, contractAddress, Contract, ContractProvider, Sender, Address } from '@ton/core';
 import '@ton/test-utils';
 import { loadCode } from './helpers';
+import { poolSetup } from '../wrappers/protocol';
 
 const OP_TRANSFER_NOTIFICATION = 0x7362d09c;
 const OP_ADAPTER_REPORT = 0x10000034;
+const OP_VAULT_CREDIT = 0x10000006;
 const OP_DRAW_RESULT = 0x10000014;
 const OP_HARVEST_YIELD = 0x10000033;
 const OP_PARAMS_UPDATED = 0x10000043;
@@ -82,8 +84,8 @@ describe('C1 pool-core hardening + governor integration', () => {
     bob = await bc.treasury('bob');
     const init = { code, data: beginCell()
       .storeUint(JOIN, 32).storeUint(T0 + 100_000, 32).storeUint(T0, 32)
-      .storeCoins(0).storeCoins(0).storeBit(false).storeAddress(admin.address)
-      .storeRef(packConfig(cfg)).storeBit(false).storeBit(false).endCell() };
+      .storeCoins(0).storeCoins(0).storeBit(false).storeUint(0, 64).storeAddress(admin.address)
+      .storeRef(poolSetup(packConfig(cfg))).storeBit(false).storeBit(false).endCell() };
     const p = bc.openContract(new Pool(contractAddress(0, init), init));
     await p.sendDeploy(admin.getSender());
     await p.sendConfigure(admin.getSender(), ROLE_JETTON_WALLET, jw.address);
@@ -103,6 +105,10 @@ describe('C1 pool-core hardening + governor integration', () => {
   const report = (amount: bigint, from: Address = adapter.address) =>
     bc.sendMessage(internal({ from, to: pool.address, value: 100_000_000n,
       body: beginCell().storeUint(OP_ADAPTER_REPORT, 32).storeUint(0, 64).storeUint(OP_HARVEST_YIELD, 32).storeCoins(0).storeCoins(amount).storeBit(true).endCell() }));
+  // the vault reports what actually landed in the pot; that is what funds prizePot
+  const credit = (amount: bigint, from: Address = vault.address) =>
+    bc.sendMessage(internal({ from, to: pool.address, value: 100_000_000n,
+      body: beginCell().storeUint(OP_VAULT_CREDIT, 32).storeUint(0, 64).storeCoins(amount).endCell() }));
   const drawResult = (seed: bigint, from: Address = drawEngine.address) =>
     bc.sendMessage(internal({ from, to: pool.address, value: 1_500_000_000n,
       body: beginCell().storeUint(OP_DRAW_RESULT, 32).storeUint(0, 64).storeUint(JOIN, 32).storeUint(seed, 256).endCell() }));
@@ -145,7 +151,9 @@ describe('C1 pool-core hardening + governor integration', () => {
     bc.now = T0 + EPOCH_LENGTH;
     await pool.sendAdvance(admin.getSender()); // epoch JOIN -> JOIN+1; depositors now eligible
 
-    await report(900n);                         // harvest credits the pot
+    await report(900n);                         // harvest ack: informational, must not move the pot
+    expect((await pool.getData()).prizePot).toBe(0n);
+    await credit(900n);                         // the vault reports what actually landed
     expect((await pool.getData()).prizePot).toBe(900n);
 
     const r = await drawResult(0xabcn);         // distribute

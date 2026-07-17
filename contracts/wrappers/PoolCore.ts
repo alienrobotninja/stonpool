@@ -1,17 +1,21 @@
 import {
   Address, beginCell, Cell, Contract, contractAddress, ContractProvider, Sender, toNano,
 } from '@ton/core';
-import { OP, packConfig, PoolConfig } from './protocol';
+import { OP, packConfig, poolSetup, PoolConfig } from './protocol';
 
 export type PoolCoreConfig = {
   epoch: number;
   genesis: number; // unix ts the first epoch starts at
   admin: Address;
   config: PoolConfig;
+  // Genesis derives this from the config, which is what a real deploy does. Specs that
+  // park the deadline far out to keep it irrelevant pass it explicitly instead of
+  // contorting their config to land on the value they want.
+  depositDeadline?: number;
 };
 
 export function poolCoreData(c: PoolCoreConfig): Cell {
-  const depositDeadline = c.genesis + c.config.epochLength - c.config.depositCutoff;
+  const depositDeadline = c.depositDeadline ?? c.genesis + c.config.epochLength - c.config.depositCutoff;
   return beginCell()
     .storeUint(c.epoch, 32)
     .storeUint(depositDeadline, 32)
@@ -19,10 +23,11 @@ export function poolCoreData(c: PoolCoreConfig): Cell {
     .storeCoins(0)
     .storeCoins(0)
     .storeBit(false) // drawOpen: no draw outstanding at genesis
+    .storeUint(0, 64) // withdrawNonce
     .storeAddress(c.admin)
-    .storeRef(packConfig(c.config))
+    .storeRef(poolSetup(packConfig(c.config))) // config + wiring, folded to keep the root under 4 refs
     .storeBit(false)
-    .storeBit(false)
+    .storeBit(false) // empty ledger + pending maps
     .endCell();
 }
 

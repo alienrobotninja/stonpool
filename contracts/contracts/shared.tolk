@@ -60,6 +60,7 @@ const ERR_INSUFFICIENT_VALUE = 404;
 const ERR_DEPOSIT_CLOSED = 410;
 const ERR_WITHDRAW_TOO_EARLY = 411;
 const ERR_NOTHING_TO_WITHDRAW = 412;
+const ERR_RECLAIM_TOO_EARLY = 413;
 const ERR_EPOCH_NOT_ENDED = 420;
 const ERR_EPOCH_ALREADY_DRAWN = 421;
 const ERR_NO_DEPOSITORS = 422;
@@ -95,6 +96,22 @@ struct AdapterReport {
     principal: coins
     yieldAmount: coins
     success: bool
+}
+
+// pool-core's journal entry for a withdrawal in flight: written in the same
+// transaction as the ledger debit, cleared when the adapter acks. joinEpoch is
+// here because a full withdraw deletes the ledger entry, and nothing else on
+// chain remembers it afterwards. If neither an ack nor a bounce ever lands, this
+// record is what the withdrawal is reconstructed from.
+//
+// requestedAt is wall-clock, not an epoch counter, and that is deliberate: it gates
+// the reclaim path, and the epoch counter is exactly what stops advancing when the
+// pool is wedged. A recovery mechanism must not depend on the machinery it recovers.
+struct PendingWithdraw {
+    who: address
+    amount: coins
+    joinEpoch: EpochId
+    requestedAt: Timestamp
 }
 
 // draw-engine -> pool-core once the seed is finalized.

@@ -2,9 +2,11 @@ import { Blockchain, SandboxContract, TreasuryContract, internal } from '@ton/sa
 import { Cell, beginCell, contractAddress, Contract, ContractProvider, Sender, Address } from '@ton/core';
 import '@ton/test-utils';
 import { loadCode } from './helpers';
+import { poolSetup } from '../wrappers/protocol';
 
 const OP_TRANSFER_NOTIFICATION = 0x7362d09c;
 const OP_ADAPTER_REPORT = 0x10000034;
+const OP_VAULT_CREDIT = 0x10000006;
 const OP_DRAW_RESULT = 0x10000014;
 const OP_PAYOUT = 0x10000005;
 const OP_HARVEST_YIELD = 0x10000033;
@@ -92,8 +94,9 @@ describe('C1 pool-core draw-result consumption + tiered payout', () => {
       .storeUint(JOIN, 32).storeUint(T0 + 100_000, 32).storeUint(T0, 32)
       .storeCoins(0).storeCoins(0)
       .storeBit(false) // drawOpen: no draw outstanding at genesis
+      .storeUint(0, 64) // withdrawNonce
       .storeAddress(admin.address)
-      .storeRef(packConfig(cfg)).storeBit(false).storeBit(false).endCell() };
+      .storeRef(poolSetup(packConfig(cfg))).storeBit(false).storeBit(false).endCell() };
     pool = bc.openContract(new Pool(contractAddress(0, init), init));
     await pool.sendDeploy(admin.getSender());
     await pool.sendConfigure(admin.getSender(), ROLE_JETTON_WALLET, jw.address);
@@ -111,8 +114,16 @@ describe('C1 pool-core draw-result consumption + tiered payout', () => {
 
   async function setup(): Promise<void> { return setupWith(CFG, 4); }
 
+  // The pot is funded by the vault reporting what actually landed in it, not by the
+  // adapter's harvest estimate. VaultCredit { queryId, amount }.
+  async function credit(amount: bigint, from: Address = vault.address) {
+    const body = beginCell().storeUint(OP_VAULT_CREDIT, 32).storeUint(0, 64).storeCoins(amount).endCell();
+    return bc.sendMessage(internal({ from, to: pool.address, value: 100_000_000n, body }));
+  }
+
+  // AdapterReportMsg { queryId, report{ reportedOp, principal, yieldAmount, success } }.
+  // Still an ack; deliberately no longer moves prizePot.
   async function harvest(amount: bigint, from: Address = adapter.address) {
-    // AdapterReportMsg { queryId, report{ reportedOp, principal, yieldAmount, success } }
     const body = beginCell().storeUint(OP_ADAPTER_REPORT, 32).storeUint(0, 64)
       .storeUint(OP_HARVEST_YIELD, 32).storeCoins(0).storeCoins(amount).storeBit(true).endCell();
     return bc.sendMessage(internal({ from, to: pool.address, value: 100_000_000n, body }));
@@ -132,9 +143,28 @@ describe('C1 pool-core draw-result consumption + tiered payout', () => {
       .map((m: any) => decodePayout(m.body));
   }
 
-  it('harvest report credits the prize pot', async () => {
+  it('vault credit funds the prize pot; the adapter harvest estimate does not', async () => {
     await setup();
-    await harvest(10_000n);
+    await credit(10_000n);
+    expect((await pool.getData()).prizePot).toBe(10_000n);
+    // the adapter's netYield is a keeper estimate of a trade STON.fi has not run yet.
+    // It must not move the pot, or pool-core and the vault end up on different numbers.
+    const r = await harvest(9_999n);
+    expect(r.transactions).toHaveTransaction({ to: pool.address, success: true }); // still a valid ack
+    expect((await pool.getData()).prizePot).toBe(10_000n); // unmoved
+  });
+
+  it('a credit from anyone but the vault is rejected (401)', async () => {
+    await setup();
+    const r = await credit(10_000n, stranger.address);
+    expect(r.transactions).toHaveTransaction({ to: pool.address, success: false, exitCode: 401 });
+    expect((await pool.getData()).prizePot).toBe(0n);
+  });
+
+  it('credits accumulate, so a pot built from several harvests is exact', async () => {
+    await setup();
+    await credit(4_000n);
+    await credit(6_000n);
     expect((await pool.getData()).prizePot).toBe(10_000n);
   });
 
@@ -148,7 +178,7 @@ describe('C1 pool-core draw-result consumption + tiered payout', () => {
   it('draw result pays skim + 3 distinct tier winners summing to the pot, then zeroes it', async () => {
     await setup();
     const POT = 10_000n;
-    await harvest(POT);
+    await credit(POT);
     const seed = 0x1234abcdn;
     const r = await deliverDraw(seed);
 
@@ -178,7 +208,7 @@ describe('C1 pool-core draw-result consumption + tiered payout', () => {
 
   it('draw result from a non-draw-engine sender is rejected (401)', async () => {
     await setup();
-    await harvest(10_000n);
+    await credit(10_000n);
     const r = await deliverDraw(0x1n, stranger.address);
     expect(r.transactions).toHaveTransaction({ to: pool.address, success: false, exitCode: ERR_UNAUTHORIZED });
     expect((await pool.getData()).prizePot).toBe(10_000n); // untouched
@@ -187,7 +217,7 @@ describe('C1 pool-core draw-result consumption + tiered payout', () => {
   it('tier-0 absorbs the division remainder (exact distribution)', async () => {
     await setup();
     const POT = 10_001n; // skim 1000 -> distributable 9001, /3 = 3000 r1
-    await harvest(POT);
+    await credit(POT);
     const r = await deliverDraw(0x55n);
     const tierPays = payoutsOf(r).filter((p) => !p.to.equals(admin.address));
     const sum = tierPays.reduce((a, p) => a + p.amount, 0n);
@@ -222,7 +252,7 @@ describe('C1 pool-core draw-result consumption + tiered payout', () => {
   it('full payout completes when the draw carries only the shipped DRAW_RESULT_GAS', async () => {
     await setup();
     const POT = 10_000n;
-    await harvest(POT);
+    await credit(POT);
     const g = await pool.getGasBudget();
 
     const seed = 0x1234abcdn;
@@ -250,7 +280,7 @@ describe('C1 pool-core draw-result consumption + tiered payout', () => {
   it.each([1, 3, 6, 8])('payout completes for prizeTiers=%i on the shipped DRAW_RESULT_GAS', async (tiers) => {
     await setupWith({ ...CFG, prizeTiers: tiers }, 8);
     const POT = 10_000n;
-    await harvest(POT);
+    await credit(POT);
     const g = await pool.getGasBudget();
     expect(BigInt(tiers)).toBeLessThanOrEqual(g.maxPrizeTiers); // sweep stays inside the budgeted ceiling
 

@@ -3,6 +3,7 @@ import { Cell, beginCell, contractAddress, Contract, ContractProvider, Address, 
 import '@ton/test-utils';
 import { loadCode } from './helpers';
 import { harvestAmounts } from '../scripts/demo';
+import { poolSetup } from '../wrappers/protocol';
 
 // Full-stack depeg propagation (B11.S1). The venue-level socialization is covered in
 // mock_stonfi_depeg.spec; this drives it through pool-core -> C6 -> the mock STON.fi pool:
@@ -84,7 +85,7 @@ describe('depeg propagates through pool-core: haircut withdrawals, socialized lo
     minter = contractAddress(0, mInit);
     await bc.sendMessage(internal({ from: minterAdmin.address, to: minter, value: toNano('1'), body: beginCell().endCell(), stateInit: mInit }));
 
-    const pInit = { code: loadCode('pool_core'), data: beginCell().storeUint(EPOCH, 32).storeUint(T0 + EPOCH_LENGTH - DEPOSIT_CUTOFF, 32).storeUint(T0, 32).storeCoins(0).storeCoins(0).storeBit(false).storeAddress(admin.address).storeRef(packConfig(CFG)).storeBit(false).storeBit(false).endCell() };
+    const pInit = { code: loadCode('pool_core'), data: beginCell().storeUint(EPOCH, 32).storeUint(T0 + EPOCH_LENGTH - DEPOSIT_CUTOFF, 32).storeUint(T0, 32).storeCoins(0).storeCoins(0).storeBit(false).storeUint(0, 64).storeAddress(admin.address).storeRef(poolSetup(packConfig(CFG))).storeBit(false).storeBit(false).endCell() };
     pool = contractAddress(0, pInit);
     await bc.sendMessage(internal({ from: admin.address, to: pool, value: toNano('5'), body: beginCell().endCell(), stateInit: pInit }));
 

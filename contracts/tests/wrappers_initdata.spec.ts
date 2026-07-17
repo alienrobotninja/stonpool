@@ -6,7 +6,7 @@ import { DrawEngine } from '../wrappers/DrawEngine';
 import { ParamGovernor } from '../wrappers/ParamGovernor';
 import { MockStonfiRouter } from '../wrappers/MockStonfiRouter';
 import { MockStonfiPool } from '../wrappers/MockStonfiPool';
-import { packConfig, PoolConfig } from '../wrappers/protocol';
+import { packConfig, PoolConfig, poolSetup } from '../wrappers/protocol';
 
 // Same constants the sandbox lifecycle specs deploy with. The wrappers must reproduce
 // these init-data cells byte-for-byte, or a testnet deploy lands a contract whose storage
@@ -30,10 +30,26 @@ describe('deploy wrappers reproduce the sandbox init-data byte-for-byte', () => 
   it('pool-core', () => {
     const inline = beginCell()
       .storeUint(EPOCH, 32).storeUint(T0 + EPOCH_LENGTH - DEPOSIT_CUTOFF, 32).storeUint(T0, 32)
-      .storeCoins(0).storeCoins(0).storeBit(false).storeAddress(admin).storeRef(packConfig(CFG)).storeBit(false).storeBit(false)
+      .storeCoins(0).storeCoins(0).storeBit(false).storeUint(0, 64).storeAddress(admin).storeRef(poolSetup(packConfig(CFG))).storeBit(false).storeBit(false)
       .endCell();
     const w = PoolCore.createFromConfig({ epoch: EPOCH, genesis: T0, admin, config: CFG }, code);
     expect(data(w).equals(inline)).toBe(true);
+  });
+
+  // Four specs park the deposit deadline far out so it stays irrelevant to what they are
+  // testing, rather than contorting their config to derive the value they want. Without
+  // this override they cannot move onto the shared builder: deriving would silently walk
+  // their deadline back by hours, and every assertion would still pass because they all
+  // deposit at bc.now = T0 and never approach it. A green suite would not catch that.
+  it('pool-core honours an explicit deposit deadline over the derived one', () => {
+    const flat = T0 + 100_000;
+    const inline = beginCell()
+      .storeUint(EPOCH, 32).storeUint(flat, 32).storeUint(T0, 32)
+      .storeCoins(0).storeCoins(0).storeBit(false).storeUint(0, 64).storeAddress(admin).storeRef(poolSetup(packConfig(CFG))).storeBit(false).storeBit(false)
+      .endCell();
+    const w = PoolCore.createFromConfig({ epoch: EPOCH, genesis: T0, admin, config: CFG, depositDeadline: flat }, code);
+    expect(data(w).equals(inline)).toBe(true);
+    expect(flat).not.toBe(T0 + EPOCH_LENGTH - DEPOSIT_CUTOFF); // the override must actually differ, or this proves nothing
   });
 
   it('jetton-vault', () => {

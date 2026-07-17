@@ -2,6 +2,7 @@ import { Blockchain, SandboxContract, TreasuryContract, internal } from '@ton/sa
 import { Cell, beginCell, contractAddress, Contract, ContractProvider, Address, toNano } from '@ton/core';
 import '@ton/test-utils';
 import { loadCode } from './helpers';
+import { poolSetup } from '../wrappers/protocol';
 
 // Failed-provide accounting consistency (B11.S2). The venue-level slippage guard (811) is
 // covered in mock_stonfi_provide; this documents the adapter-path consequence. C6 books
@@ -79,7 +80,7 @@ describe('failed provide leaves principal booked but LP-unbacked (B11.S2)', () =
     minter = contractAddress(0, mInit);
     await bc.sendMessage(internal({ from: minterAdmin.address, to: minter, value: toNano('1'), body: beginCell().endCell(), stateInit: mInit }));
 
-    const pInit = { code: loadCode('pool_core'), data: beginCell().storeUint(EPOCH, 32).storeUint(T0 + EPOCH_LENGTH - DEPOSIT_CUTOFF, 32).storeUint(T0, 32).storeCoins(0).storeCoins(0).storeBit(false).storeAddress(admin.address).storeRef(packConfig(CFG)).storeBit(false).storeBit(false).endCell() };
+    const pInit = { code: loadCode('pool_core'), data: beginCell().storeUint(EPOCH, 32).storeUint(T0 + EPOCH_LENGTH - DEPOSIT_CUTOFF, 32).storeUint(T0, 32).storeCoins(0).storeCoins(0).storeBit(false).storeUint(0, 64).storeAddress(admin.address).storeRef(poolSetup(packConfig(CFG))).storeBit(false).storeBit(false).endCell() };
     pool = contractAddress(0, pInit);
     await bc.sendMessage(internal({ from: admin.address, to: pool, value: toNano('5'), body: beginCell().endCell(), stateInit: pInit }));
 

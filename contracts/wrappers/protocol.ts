@@ -48,6 +48,13 @@ export type PoolConfig = {
   drawBond: bigint;
 };
 
+// pool-core folds config + wiring into one cell so its root stays under TON's 4-ref
+// limit. Takes an already-packed config so it composes with either packConfig above or
+// a spec's local copy. Governor storage keeps the bare config ref - different layout.
+export function poolSetup(config: Cell, wiring: Cell | null = null): Cell {
+  return beginCell().storeRef(config).storeMaybeRef(wiring).endCell();
+}
+
 // shared by pool-core and the governor; the on-chain layout must stay byte-identical
 export function packConfig(c: PoolConfig): Cell {
   return beginCell()

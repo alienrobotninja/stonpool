@@ -35,3 +35,18 @@ struct (0x10000016) SettleDraw {
 struct (0x10000017) ClearDrawOpen {
     queryId: uint64
 }
+
+// anyone -> pool-core: undo a journaled withdrawal the adapter never answered.
+//
+// The journal's last branch. An ack clears the entry, a bounce restores from it, and
+// this covers the case where neither arrives - a message lost, or an adapter wedged
+// mid-flight. Without it the record would sit there forever and the depositor's claim
+// with it, which is the one branch that would put a fund loss back into Option B.
+//
+// Deliberately permissionless: the restore credits the address in the journal, never
+// the caller, so there is nothing to gain by calling it on someone else's behalf.
+// Gating it on the admin would make recovery depend on a key being available at
+// exactly the moment something has already gone wrong.
+struct (0x10000018) ReclaimWithdraw {
+    queryId: uint64
+}

@@ -2,6 +2,7 @@ import { Blockchain, SandboxContract, TreasuryContract, internal } from '@ton/sa
 import { Cell, beginCell, contractAddress, Contract, ContractProvider, Address, toNano } from '@ton/core';
 import '@ton/test-utils';
 import { loadCode } from './helpers';
+import { poolSetup } from '../wrappers/protocol';
 
 // This is the C7 lifecycle (pool_lifecycle_e2e) with the real STON.fi adapter (C6) and
 // the mock STON.fi stack swapped in for the mock adapter. pool-core is byte-identical:
@@ -113,7 +114,7 @@ describe('C6 drop-in lifecycle e2e: deposit -> stonfi harvest -> draw -> payout 
 
     const pInit = { code: loadCode('pool_core'), data: beginCell()
       .storeUint(EPOCH, 32).storeUint(T0 + EPOCH_LENGTH - DEPOSIT_CUTOFF, 32).storeUint(T0, 32)
-      .storeCoins(0).storeCoins(0).storeBit(false).storeAddress(admin.address).storeRef(packConfig(CFG)).storeBit(false).storeBit(false).endCell() };
+      .storeCoins(0).storeCoins(0).storeBit(false).storeUint(0, 64).storeAddress(admin.address).storeRef(poolSetup(packConfig(CFG))).storeBit(false).storeBit(false).endCell() };
     pool = contractAddress(0, pInit);
     await bc.sendMessage(internal({ from: admin.address, to: pool, value: toNano('5'), body: beginCell().endCell(), stateInit: pInit }));
 

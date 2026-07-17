@@ -2,6 +2,7 @@ import { Blockchain, SandboxContract, TreasuryContract, internal } from '@ton/sa
 import { Cell, beginCell, contractAddress, Contract, ContractProvider, Sender, Address, toNano } from '@ton/core';
 import '@ton/test-utils';
 import { loadCode } from './helpers';
+import { poolSetup } from '../wrappers/protocol';
 
 const OP_ADVANCE_EPOCH = 0x10000004;
 const OP_HARVEST_YIELD = 0x10000033;
@@ -67,8 +68,9 @@ describe('C1 pool-core epoch lifecycle', () => {
       .storeUint(EPOCH, 32).storeUint(T0 + EPOCH_LENGTH - DEPOSIT_CUTOFF, 32).storeUint(T0, 32)
       .storeCoins(0).storeCoins(0)
       .storeBit(false) // drawOpen
+      .storeUint(0, 64) // withdrawNonce
       .storeAddress(admin.address)
-      .storeRef(packConfig(CFG))
+      .storeRef(poolSetup(packConfig(CFG)))
       .storeBit(false).storeBit(false)
       .endCell();
   }
