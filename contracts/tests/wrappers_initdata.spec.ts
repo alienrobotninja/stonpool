@@ -36,6 +36,22 @@ describe('deploy wrappers reproduce the sandbox init-data byte-for-byte', () => 
     expect(data(w).equals(inline)).toBe(true);
   });
 
+  // Four specs park the deposit deadline far out so it stays irrelevant to what they are
+  // testing, rather than contorting their config to derive the value they want. Without
+  // this override they cannot move onto the shared builder: deriving would silently walk
+  // their deadline back by hours, and every assertion would still pass because they all
+  // deposit at bc.now = T0 and never approach it. A green suite would not catch that.
+  it('pool-core honours an explicit deposit deadline over the derived one', () => {
+    const flat = T0 + 100_000;
+    const inline = beginCell()
+      .storeUint(EPOCH, 32).storeUint(flat, 32).storeUint(T0, 32)
+      .storeCoins(0).storeCoins(0).storeBit(false).storeUint(0, 64).storeAddress(admin).storeRef(poolSetup(packConfig(CFG))).storeBit(false).storeBit(false)
+      .endCell();
+    const w = PoolCore.createFromConfig({ epoch: EPOCH, genesis: T0, admin, config: CFG, depositDeadline: flat }, code);
+    expect(data(w).equals(inline)).toBe(true);
+    expect(flat).not.toBe(T0 + EPOCH_LENGTH - DEPOSIT_CUTOFF); // the override must actually differ, or this proves nothing
+  });
+
   it('jetton-vault', () => {
     const inline = beginCell().storeAddress(admin).storeAddress(null).storeAddress(null).storeCoins(0).endCell();
     expect(data(JettonVault.createFromConfig(admin, code)).equals(inline)).toBe(true);
