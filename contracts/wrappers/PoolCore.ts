@@ -8,10 +8,14 @@ export type PoolCoreConfig = {
   genesis: number; // unix ts the first epoch starts at
   admin: Address;
   config: PoolConfig;
+  // Genesis derives this from the config, which is what a real deploy does. Specs that
+  // park the deadline far out to keep it irrelevant pass it explicitly instead of
+  // contorting their config to land on the value they want.
+  depositDeadline?: number;
 };
 
 export function poolCoreData(c: PoolCoreConfig): Cell {
-  const depositDeadline = c.genesis + c.config.epochLength - c.config.depositCutoff;
+  const depositDeadline = c.depositDeadline ?? c.genesis + c.config.epochLength - c.config.depositCutoff;
   return beginCell()
     .storeUint(c.epoch, 32)
     .storeUint(depositDeadline, 32)
