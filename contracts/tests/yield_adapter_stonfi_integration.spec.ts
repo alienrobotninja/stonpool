@@ -2,7 +2,7 @@ import { Blockchain, SandboxContract, TreasuryContract, internal } from '@ton/sa
 import { Cell, beginCell, contractAddress, Contract, ContractProvider, Address, toNano } from '@ton/core';
 import '@ton/test-utils';
 import { loadCode } from './helpers';
-import { poolSetup } from '../wrappers/protocol';
+import { poolCoreData } from '../wrappers/PoolCore';
 
 // This is the C7 lifecycle (pool_lifecycle_e2e) with the real STON.fi adapter (C6) and
 // the mock STON.fi stack swapped in for the mock adapter. pool-core is byte-identical:
@@ -112,9 +112,7 @@ describe('C6 drop-in lifecycle e2e: deposit -> stonfi harvest -> draw -> payout 
     minter = contractAddress(0, mInit);
     await bc.sendMessage(internal({ from: minterAdmin.address, to: minter, value: toNano('1'), body: beginCell().endCell(), stateInit: mInit }));
 
-    const pInit = { code: loadCode('pool_core'), data: beginCell()
-      .storeUint(EPOCH, 32).storeUint(T0 + EPOCH_LENGTH - DEPOSIT_CUTOFF, 32).storeUint(T0, 32)
-      .storeCoins(0).storeCoins(0).storeBit(false).storeUint(0, 64).storeAddress(admin.address).storeRef(poolSetup(packConfig(CFG))).storeBit(false).storeBit(false).endCell() };
+    const pInit = { code: loadCode('pool_core'), data: poolCoreData({ epoch: EPOCH, genesis: T0, admin: admin.address, config: CFG }) };
     pool = contractAddress(0, pInit);
     await bc.sendMessage(internal({ from: admin.address, to: pool, value: toNano('5'), body: beginCell().endCell(), stateInit: pInit }));
 
@@ -123,7 +121,6 @@ describe('C6 drop-in lifecycle e2e: deposit -> stonfi harvest -> draw -> payout 
     adapter = contractAddress(0, aInit);
     await bc.sendMessage(internal({ from: admin.address, to: adapter, value: toNano('30'), body: beginCell().endCell(), stateInit: aInit }));
 
-    // mock STON.fi router + pool (pool is the LP master)
     const rInit = { code: loadCode('mock_stonfi_router'), data: beginCell().storeAddress(admin.address).storeAddress(null).storeAddress(null).endCell() };
     router = contractAddress(0, rInit);
     await bc.sendMessage(internal({ from: admin.address, to: router, value: toNano('2'), body: beginCell().endCell(), stateInit: rInit }));

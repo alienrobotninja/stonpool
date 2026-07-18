@@ -2,7 +2,8 @@ import { Blockchain, SandboxContract, TreasuryContract, internal } from '@ton/sa
 import { Cell, beginCell, contractAddress, Contract, ContractProvider, Sender, Address, toNano } from '@ton/core';
 import '@ton/test-utils';
 import { loadCode } from './helpers';
-import { poolSetup } from '../wrappers/protocol';
+import { PoolConfig } from '../wrappers/protocol';
+import { poolCoreData } from '../wrappers/PoolCore';
 
 const OP_ADVANCE_EPOCH = 0x10000004;
 const OP_HARVEST_YIELD = 0x10000033;
@@ -22,12 +23,7 @@ const EPOCH = 5;
 const EPOCH_LENGTH = 3600;
 const DEPOSIT_CUTOFF = 600;
 
-type Config = { epochLength: number; depositCutoff: number; commitWindow: number; revealWindow: number; minHoldEpochs: number; prizeTiers: number; skimBps: number; drawBond: bigint };
-const CFG: Config = { epochLength: EPOCH_LENGTH, depositCutoff: DEPOSIT_CUTOFF, commitWindow: 900, revealWindow: 900, minHoldEpochs: 1, prizeTiers: 3, skimBps: 1500, drawBond: 1_000_000_000n };
-function packConfig(c: Config): Cell {
-  return beginCell().storeUint(c.epochLength, 32).storeUint(c.depositCutoff, 32).storeUint(c.commitWindow, 32).storeUint(c.revealWindow, 32)
-    .storeUint(c.minHoldEpochs, 16).storeUint(c.prizeTiers, 8).storeUint(c.skimBps, 16).storeCoins(c.drawBond).endCell();
-}
+const CFG: PoolConfig = { epochLength: EPOCH_LENGTH, depositCutoff: DEPOSIT_CUTOFF, commitWindow: 900, revealWindow: 900, minHoldEpochs: 1, prizeTiers: 3, skimBps: 1500, drawBond: 1_000_000_000n };
 
 class Pool implements Contract {
   constructor(readonly address: Address, readonly init: { code: Cell; data: Cell }) {}
@@ -64,15 +60,7 @@ describe('C1 pool-core epoch lifecycle', () => {
   beforeAll(() => { code = loadCode('pool_core'); });
 
   function poolData(): Cell {
-    return beginCell()
-      .storeUint(EPOCH, 32).storeUint(T0 + EPOCH_LENGTH - DEPOSIT_CUTOFF, 32).storeUint(T0, 32)
-      .storeCoins(0).storeCoins(0)
-      .storeBit(false) // drawOpen
-      .storeUint(0, 64) // withdrawNonce
-      .storeAddress(admin.address)
-      .storeRef(poolSetup(packConfig(CFG)))
-      .storeBit(false).storeBit(false)
-      .endCell();
+    return poolCoreData({ epoch: EPOCH, genesis: T0, admin: admin.address, config: CFG });
   }
 
   async function fresh(): Promise<SandboxContract<Pool>> {
