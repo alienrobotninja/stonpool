@@ -31,12 +31,34 @@ const VALUE = {
   drawEngine: toNano('0.15'), governor: toNano('0.15'), router: toNano('0.15'), stonfiPool: toNano('0.2'),
 };
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// toncenter blips: a single 30s timeout mid-deploy used to crash the whole run, and since
+// genesis is per-run, the retry would orphan the half-deployed stack. Retry the idempotent
+// RPCs so one invocation rides through transient errors and finishes end-to-end, keeping
+// genesis (and the deposit-window timing) fresh.
+const isTransient = (e) =>
+  e?.code === 'ECONNABORTED' || e?.code === 'ETIMEDOUT' || e?.code === 'ECONNRESET' ||
+  /timeout|socket hang up|network|EAI_AGAIN/i.test(e?.message ?? '') ||
+  e?.response?.status === 429 || e?.response?.status >= 500;
+
+async function rpc(label, fn, tries = 6) {
+  for (let i = 1; ; i++) {
+    try { return await fn(); }
+    catch (e) {
+      if (!isTransient(e) || i >= tries) throw e;
+      console.log(`  retry ${i}/${tries - 1} ${label}: ${e?.code ?? e?.message}`);
+      await sleep(2500 * i);
+    }
+  }
+}
+
 async function main() {
   const c = new TonClient({ endpoint: 'https://testnet.toncenter.com/api/v2/jsonRPC', apiKey });
   const key = await mnemonicToPrivateKey(mnemonic);
   const w = c.open(WalletContractV5R1.create({ workchain: 0, publicKey: key.publicKey }));
   const admin = w.address;
-  console.log('deployer', admin.toString({ testOnly: true, bounceable: false }), Number(await c.getBalance(admin)) / 1e9, 'TON');
+  console.log('deployer', admin.toString({ testOnly: true, bounceable: false }), Number(await rpc('balance', () => c.getBalance(admin))) / 1e9, 'TON');
 
   const codes = {
     poolCore: load('PoolCore'), adapter: load('YieldAdapterStonfi'), vault: load('JettonVault'),
@@ -50,7 +72,7 @@ async function main() {
 
   const inits = {
     poolCore: { code: codes.poolCore, data: poolCoreData({ epoch: 1, genesis, admin, config: cfg }) },
-    adapter: { code: codes.adapter, data: yieldAdapterStonfiData(admin) },
+    adapter: { code: codes.adapter, data: yieldAdapterStonfiData(admin, cr.poolCore) },
     vault: { code: codes.vault, data: jettonVaultData(admin) },
     router: { code: codes.router, data: mockStonfiRouterData(admin) },
     stonfiPool: { code: codes.stonfiPool, data: mockStonfiPoolData(admin, codes.wallet) },
@@ -58,19 +80,28 @@ async function main() {
     governor: { code: codes.governor, data: paramGovernorData({ admin, poolCore: cr.poolCore, timelockDelay: plan.timelock, config: cfg }) },
   };
 
-  let seqno = await w.getSeqno();
+  // fetch a fresh seqno per send, fire, then poll until it advances. a transient send error
+  // is not fatal: the tx may still have landed, so we fall through to the poll rather than crash.
   const send = async (label, to, value, body, init) => {
     console.log('>', label);
-    await w.sendTransfer({ seqno, secretKey: key.secretKey, sendMode: SendMode.PAY_GAS_SEPARATELY, messages: [internal({ to, value, body, init, bounce: false })] });
-    const prev = seqno;
-    for (let i = 0; i < 40; i++) { await new Promise(r => setTimeout(r, 3000)); seqno = await w.getSeqno(); if (seqno > prev) return; }
+    const prev = await rpc('seqno ' + label, () => w.getSeqno());
+    try {
+      await w.sendTransfer({ seqno: prev, secretKey: key.secretKey, sendMode: SendMode.PAY_GAS_SEPARATELY, messages: [internal({ to, value, body, init, bounce: false })] });
+    } catch (e) {
+      if (!isTransient(e)) throw e;
+      console.log(`  ${label} send errored (${e?.code ?? 'net'}); polling to see if it landed`);
+    }
+    for (let i = 0; i < 40; i++) {
+      await sleep(3000);
+      if (await rpc('confirm ' + label, () => w.getSeqno()) > prev) return;
+    }
     throw new Error('seqno stuck at ' + label);
   };
 
   const order = ['poolCore', 'adapter', 'vault', 'router', 'stonfiPool', 'drawEngine', 'governor'];
   for (const name of order) {
     const a = contractAddress(0, inits[name]);
-    if ((await c.getContractState(a)).state === 'active') { console.log('= deployed', name); continue; }
+    if ((await rpc('state ' + name, () => c.getContractState(a))).state === 'active') { console.log('= deployed', name); continue; }
     await send('deploy ' + name, a, VALUE[name], beginCell().endCell(), inits[name]);
   }
 
