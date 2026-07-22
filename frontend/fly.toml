@@ -15,10 +15,10 @@ primary_region = 'ams'
     VITE_APP_URL = 'https://stonpool-web.fly.dev'
     VITE_API_BASE_URL = 'https://stonpool-api.fly.dev'
     VITE_NETWORK = 'testnet'
-    VITE_POOL_CORE_ADDRESS = '0:566af724a955a1ea7518fee4905f23de92e6d9178444df5530f9bee48e308399'
+    VITE_POOL_CORE_ADDRESS = '0:c1e5efa1d72267a181ddefed884155da317b64de3bd233dddcc549bfb84ac8cf'
     VITE_FAUCET_ADDRESS = '0:fd9304b1b6a48095946e03f453adab8ff200a0ca68dbf2370ec7f6ff1001fe9b'
     VITE_JETTON_MINTER_ADDRESS = '0:35641705ecea9f16147e51e462ccd4a3c44f32bd4cb98e1d11bc3edf4fd10898'
-    VITE_ADAPTER_ADDRESS = '0:0fe2a1881293389ae767a571b1eeec3f11ca972ddc6eecf99b371a875e2c83b8'
+    VITE_ADAPTER_ADDRESS = '0:21edbc867401397c9ff7a1a6891360ffa231d74d438c190f3b8b744376cdefbf'
 
 [http_service]
   internal_port = 80
