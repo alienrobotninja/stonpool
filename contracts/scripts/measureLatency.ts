@@ -4,9 +4,9 @@ import { TonClient, WalletContractV5R1 } from '@ton/ton';
 import { internal, toNano, SendMode } from '@ton/core';
 
 // Measures the round-trip a keeper actually faces: submit a state-changing tx, then poll
-// the RPC until it reflects the change. This is the number that has to be well under the
-// commit/reveal windows, or every draw orphans at the boundary (HANDOFF section 8). Run
-// against the same endpoint the keeper uses. 5 samples, reports min/median/max seconds.
+// the RPC until it reflects the change. This number has to be well under the commit/reveal
+// windows or every draw orphans at the boundary (HANDOFF section 8). Run against the same
+// endpoint the keeper uses. 5 samples, reports min/median/max seconds.
 
 const SAMPLES = 5;
 
@@ -16,6 +16,12 @@ const apiKey = env.match(/TONCENTER_TESTNET_KEY=(.+)/)?.[1]?.trim();
 const endpoint = env.match(/TONCENTER_TESTNET_ENDPOINT=(.+)/)?.[1]?.trim()
   ?? 'https://testnet.toncenter.com/api/v2/jsonRPC';
 
+// toncenter returns a verbose axios error on a bad key/endpoint; surface only the useful line
+const explain = (e: any): string => {
+  const d = e?.response?.data;
+  return d?.error ? `${e.response.status} ${d.error}` : (e?.message ?? String(e));
+};
+
 async function main() {
   const c = new TonClient({ endpoint, apiKey });
   const key = await mnemonicToPrivateKey(mnemonic);
@@ -23,15 +29,29 @@ async function main() {
   console.log('endpoint', endpoint);
   console.log('wallet', w.address.toString({ testOnly: true, bounceable: false }));
 
+  // preflight: a dead key or bad endpoint fails here with one line, not a 2000-line dump
+  try {
+    const bal = Number(await c.getBalance(w.address)) / 1e9;
+    console.log('balance', bal, 'TON');
+    if (bal < 0.2) { console.log('fund the wallet (>=0.2 TON) before probing'); return; }
+  } catch (e) {
+    console.error('endpoint/key check failed:', explain(e));
+    console.error('401 -> refresh TONCENTER_TESTNET_KEY (@toncenter on Telegram), or set TONCENTER_TESTNET_ENDPOINT');
+    process.exit(1);
+  }
+
   const samples: number[] = [];
   for (let i = 0; i < SAMPLES; i++) {
     const seqno = await w.getSeqno();
     const t0 = Date.now();
-    // 0-value self-transfer: cheapest state change that bumps seqno
-    await w.sendTransfer({
-      seqno, secretKey: key.secretKey, sendMode: SendMode.PAY_GAS_SEPARATELY,
-      messages: [internal({ to: w.address, value: toNano('0.02'), bounce: false })],
-    });
+    try {
+      await w.sendTransfer({
+        seqno, secretKey: key.secretKey, sendMode: SendMode.PAY_GAS_SEPARATELY,
+        messages: [internal({ to: w.address, value: toNano('0.02'), bounce: false })],
+      });
+    } catch (e) {
+      console.error('send failed:', explain(e)); process.exit(1);
+    }
     while (Date.now() - t0 < 900_000) {
       await new Promise(r => setTimeout(r, 1000));
       if (await w.getSeqno() > seqno) break;
@@ -46,7 +66,7 @@ async function main() {
   console.log(`\nmin ${sorted[0].toFixed(1)}s  median ${median.toFixed(1)}s  max ${sorted[sorted.length - 1].toFixed(1)}s`);
   console.log(median <= 90
     ? 'OK: DEMO_CONFIG 120s windows have margin. Deploy as-is.'
-    : 'TOO SLOW for a sped-up demo: reduce lag at the endpoint (see notes) before redeploy.');
+    : 'TOO SLOW for a sped-up demo: reduce lag at the endpoint before redeploy.');
 }
 
-main();
+main().catch(e => { console.error('probe failed:', explain(e)); process.exit(1); });
