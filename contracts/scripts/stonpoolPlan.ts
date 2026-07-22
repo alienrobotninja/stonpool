@@ -84,7 +84,8 @@ export function buildPlan(input: PlanInput): Plan {
   const at = (code: Cell, data: Cell) => contractAddress(0, { code, data });
 
   const poolCore = at(codes.poolCore, poolCoreData({ epoch, genesis, admin, config }));
-  const adapter = at(codes.adapter, yieldAdapterStonfiData(admin));
+  // seed poolCore into the adapter init so its address is deployment-scoped (fresh state per redeploy)
+  const adapter = at(codes.adapter, yieldAdapterStonfiData(admin, poolCore));
   const vault = at(codes.vault, jettonVaultData(admin));
   const router = at(codes.router, mockStonfiRouterData(admin));
   const stonfiPool = at(codes.stonfiPool, mockStonfiPoolData(admin, codes.wallet));
