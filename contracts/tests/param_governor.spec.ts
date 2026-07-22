@@ -11,6 +11,10 @@ const ERR_TIMELOCK_ACTIVE = 440;
 const ERR_INVALID_PARAMS = 441;
 const ERR_NOTHING_PENDING = 442;
 
+// mirrors MAX_PRIZE_TIERS in contracts/gas.tolk; if that ceiling moves, exactly one of
+// the two boundary tests below flips, which is the signal to resync this constant.
+const MAX_PRIZE_TIERS = 8;
+
 const T0 = 1_000_000;
 const TIMELOCK = 3600;
 
@@ -128,6 +132,24 @@ describe('C8 param-governor', () => {
     const bad = { ...C1, skimBps: 10001 };
     const r = await g.sendPropose(admin.getSender(), bad);
     expect(r.transactions).toHaveTransaction({ to: g.address, success: false, exitCode: ERR_INVALID_PARAMS });
+  });
+
+  // prizeTiers above MAX_PRIZE_TIERS passes the runtime clamp but under-funds pool-core's
+  // payout loop (DRAW_RESULT_GAS is sized for exactly MAX_PRIZE_TIERS). The governor is
+  // the only place that can stop it before it reaches a live draw.
+  it('rejects a config with prizeTiers above the gas ceiling', async () => {
+    const g = await fresh();
+    const bad = { ...C1, prizeTiers: MAX_PRIZE_TIERS + 1 };
+    const r = await g.sendPropose(admin.getSender(), bad);
+    expect(r.transactions).toHaveTransaction({ to: g.address, success: false, exitCode: ERR_INVALID_PARAMS });
+    expect(await g.getPending()).toBeNull(); // nothing staged
+  });
+
+  it('accepts a config with prizeTiers at the gas ceiling', async () => {
+    const g = await fresh();
+    const atMax = { ...C1, prizeTiers: MAX_PRIZE_TIERS };
+    await g.sendPropose(admin.getSender(), atMax);
+    expect(await g.getPending()).toEqual(atMax); // inclusive bound: exactly MAX is valid
   });
 
   it('rejects execute before the timelock elapses', async () => {

@@ -1,6 +1,7 @@
 // C8 param-governor: holds the active PoolConfig and applies updates behind a
 // timelock. Configs live in refs so two of them plus the wiring fit one cell.
 import "shared"
+import "gas"
 import "governor_messages"
 
 const ERR_NOTHING_PENDING = 442
@@ -22,6 +23,7 @@ fun isValidConfig(c: PoolConfig): bool {
         && c.commitWindow != 0
         && c.revealWindow != 0
         && c.prizeTiers != 0
+        && c.prizeTiers <= MAX_PRIZE_TIERS  // above this, DRAW_RESULT_GAS under-funds the payout loop
         && c.skimBps <= 10000
         && c.depositCutoff <= c.epochLength
         && c.commitWindow + c.revealWindow <= c.epochLength;
