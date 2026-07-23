@@ -1,5 +1,5 @@
 import { Address, beginCell, Cell } from '@ton/core';
-import { buildPlan, envBlock, DEFAULT_CONFIG, DEMO_CONFIG, PlanInput } from '../scripts/stonpoolPlan';
+import { buildPlan, envBlock, DEFAULT_CONFIG, DEMO_CONFIG, GOVERNED_CONFIG, PlanInput } from '../scripts/stonpoolPlan';
 
 const admin = Address.parseRaw('0:' + '11'.repeat(32));
 const minter = Address.parseRaw('0:' + '22'.repeat(32));
@@ -18,6 +18,32 @@ describe('stonpool deploy plan', () => {
     expect(DEMO_CONFIG.depositCutoff).toBeLessThan(DEFAULT_CONFIG.depositCutoff);
     expect(DEMO_CONFIG.commitWindow).toBeLessThan(DEFAULT_CONFIG.commitWindow);
     expect(DEMO_CONFIG.revealWindow).toBeLessThan(DEFAULT_CONFIG.revealWindow);
+  });
+
+  // Mirrors isValidConfig in contracts/param_governor.tolk. The governor rejects an
+  // invalid proposal on-chain, but that costs a testnet round trip to discover; this
+  // catches it here instead. MAX_PRIZE_TIERS is 8 (contracts/gas.tolk).
+  it('governed config satisfies every governor constraint', () => {
+    const c = GOVERNED_CONFIG;
+    expect(c.epochLength).not.toBe(0);
+    expect(c.commitWindow).not.toBe(0);
+    expect(c.revealWindow).not.toBe(0);
+    expect(c.prizeTiers).not.toBe(0);
+    expect(c.prizeTiers).toBeLessThanOrEqual(8);
+    expect(c.skimBps).toBeLessThanOrEqual(10000);
+    expect(c.depositCutoff).toBeLessThanOrEqual(c.epochLength);
+    expect(c.commitWindow + c.revealWindow).toBeLessThanOrEqual(c.epochLength);
+  });
+
+  // The slack between the draw windows and the epoch is the orphan margin: if a draw has
+  // not settled when the next advance lands, the advance throws ERR_BUSY. Keep it wide
+  // enough that the keeper has many poll cycles to settle in.
+  it('governed config speeds up the cycle while keeping orphan margin', () => {
+    const g = GOVERNED_CONFIG;
+    const cycle = (c: typeof g) => c.epochLength + c.commitWindow + c.revealWindow;
+    expect(cycle(g)).toBeLessThan(cycle(DEMO_CONFIG));
+    expect(g.epochLength - (g.commitWindow + g.revealWindow)).toBeGreaterThanOrEqual(90);
+    expect(g.minHoldEpochs).toBe(DEMO_CONFIG.minHoldEpochs); // product property, unchanged
   });
 
   it('is deterministic for identical inputs', () => {
