@@ -10,7 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.clients.chain import ChainClient, ToncenterClient
 from app.clients.quote import harvest_plan
-from app.clients.sources import build_quote_source, read_adapter_state, read_pool_data
+from app.clients.sources import (
+    build_quote_source,
+    read_adapter_state,
+    read_pool_config,
+    read_pool_data,
+)
 from app.core.config import Settings, get_settings
 from app.db.session import get_sessionmaker, init_engine
 from app.keeper.executor import Keeper
@@ -29,6 +34,7 @@ async def build_state(client: ChainClient, cfg: Settings, now: int) -> KeeperSta
     # Live-chain phase resolution. Runtime-only (depends on real get-method reads); the pure
     # phase mapping is unit-tested with a fake client, the end-to-end reads on testnet.
     pool = await read_pool_data(client, cfg.pool_core_address)
+    pool_cfg = await read_pool_config(client, cfg.pool_core_address)
     adapter = await read_adapter_state(client, cfg.adapter_address)
     quote = await build_quote_source(client, cfg).fetch()
     base = dict(adapter=adapter, quote=quote, now=now, min_yield=cfg.keeper_min_yield)
@@ -41,7 +47,10 @@ async def build_state(client: ChainClient, cfg: Settings, now: int) -> KeeperSta
         return KeeperState(phase=_DRAW_PHASE[draw_phase], epoch=draw_epoch, prize_pot=pot, **base)
 
     # no draw open: roll the epoch once it has ended, otherwise sit idle while yield accrues
-    if now >= pool.deposit_deadline + cfg.deposit_cutoff:
+    # epoch_end == deposit_deadline + deposit_cutoff (pool-core derives the deadline as
+    # epoch_start + epoch_length - deposit_cutoff). Taken from the chain so a governed
+    # config change lands immediately instead of waiting on a settings redeploy.
+    if now >= pool.deposit_deadline + pool_cfg.deposit_cutoff:
         hp = harvest_plan(adapter, quote)
         phase = Phase.HARVEST if hp.gross_yield >= cfg.keeper_min_yield else Phase.ADVANCE
         return KeeperState(phase=phase, epoch=pool.epoch, **base)

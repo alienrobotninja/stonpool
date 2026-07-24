@@ -1,5 +1,5 @@
 import { Address, beginCell, Cell } from '@ton/core';
-import { buildPlan, envBlock, DEFAULT_CONFIG, DEMO_CONFIG, PlanInput } from '../scripts/stonpoolPlan';
+import { buildPlan, envBlock, DEFAULT_CONFIG, DEMO_CONFIG, GOVERNED_CONFIG, PlanInput } from '../scripts/stonpoolPlan';
 
 const admin = Address.parseRaw('0:' + '11'.repeat(32));
 const minter = Address.parseRaw('0:' + '22'.repeat(32));
@@ -18,6 +18,34 @@ describe('stonpool deploy plan', () => {
     expect(DEMO_CONFIG.depositCutoff).toBeLessThan(DEFAULT_CONFIG.depositCutoff);
     expect(DEMO_CONFIG.commitWindow).toBeLessThan(DEFAULT_CONFIG.commitWindow);
     expect(DEMO_CONFIG.revealWindow).toBeLessThan(DEFAULT_CONFIG.revealWindow);
+  });
+
+  // Mirrors isValidConfig in contracts/param_governor.tolk. The governor rejects an
+  // invalid proposal on-chain, but that costs a testnet round trip to discover; this
+  // catches it here instead. MAX_PRIZE_TIERS is 8 (contracts/gas.tolk).
+  it('governed config satisfies every governor constraint', () => {
+    const c = GOVERNED_CONFIG;
+    expect(c.epochLength).not.toBe(0);
+    expect(c.commitWindow).not.toBe(0);
+    expect(c.revealWindow).not.toBe(0);
+    expect(c.prizeTiers).not.toBe(0);
+    expect(c.prizeTiers).toBeLessThanOrEqual(8);
+    expect(c.skimBps).toBeLessThanOrEqual(10000);
+    expect(c.depositCutoff).toBeLessThanOrEqual(c.epochLength);
+    expect(c.commitWindow + c.revealWindow).toBeLessThanOrEqual(c.epochLength);
+  });
+
+  // The draw-engine keeps its OWN commitWindow/revealWindow in DrawStorage, fixed at deploy
+  // time; pool-core's ParamsUpdated does not forward to it and it has no reconfigure op. So
+  // governing those two fields does NOT shorten a draw - the engine still runs the windows
+  // it was deployed with. The margin that matters is the governed epoch minus the DEPLOYED
+  // draw duration: if a draw has not settled when the next advance lands, it hits ERR_BUSY.
+  it('governed epoch outlasts the draw the deployed engine actually runs', () => {
+    const deployedDraw = DEMO_CONFIG.commitWindow + DEMO_CONFIG.revealWindow;
+    const cycle = (c: typeof GOVERNED_CONFIG) => c.epochLength + c.commitWindow + c.revealWindow;
+    expect(cycle(GOVERNED_CONFIG)).toBeLessThan(cycle(DEMO_CONFIG)); // still a speed-up
+    expect(GOVERNED_CONFIG.epochLength - deployedDraw).toBeGreaterThanOrEqual(60);
+    expect(GOVERNED_CONFIG.minHoldEpochs).toBe(DEMO_CONFIG.minHoldEpochs); // product property
   });
 
   it('is deterministic for identical inputs', () => {

@@ -25,6 +25,21 @@ class PoolData:
 
 
 @dataclass(frozen=True)
+class PoolConfig:
+    # the governed config as pool-core holds it. read from chain rather than mirrored in
+    # settings: the governor can change these at any time and a stale copy silently
+    # mistimes the keeper.
+    epoch_length: int
+    deposit_cutoff: int
+    commit_window: int
+    reveal_window: int
+    min_hold_epochs: int
+    prize_tiers: int
+    skim_bps: int
+    draw_bond: int
+
+
+@dataclass(frozen=True)
 class HarvestPlan:
     lp_to_burn: int
     gross_yield: int  # underlying the burn actually releases (keeper sends this to C6)

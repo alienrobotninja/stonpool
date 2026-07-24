@@ -4,8 +4,7 @@ import { TonClient } from '@ton/ton';
 import { Address } from '@ton/core';
 import { AddressRegistry } from './addresses';
 
-// Proves the redeploy wired correctly and started clean, on-chain (HANDOFF section 7 step 3:
-// do not assume). Load-bearing checks: the vault's poolCore link (or VaultCredit never fires
+// Proves the redeploy wired correctly and started clean, on-chain. Load-bearing checks: the vault's poolCore link (or VaultCredit never fires
 // and prizePot stays 0 forever) and the REUSED adapter/router state (the deploy skipped them
 // as already-active, so they must be verified zero or accounting is off from block zero).
 

@@ -33,6 +33,22 @@ export const DEMO_CONFIG: PoolConfig = {
   drawBond: toNano('0.2'),
 };
 
+// What the governor proposes over the deployed DEMO_CONFIG. Halves the
+// cycle (epoch 600 -> 300) while keeping commit/reveal well above the keeper's reaction
+// time. minHoldEpochs stays 1 - it is a product property, not a demo knob, and faking it
+// would misrepresent the mechanic. prizeTiers stays 3: it is clamped at runtime to the
+// eligible count, so it only reads as a real draw when the field is several times larger.
+export const GOVERNED_CONFIG: PoolConfig = {
+  epochLength: 300,
+  depositCutoff: 60,
+  commitWindow: 90,
+  revealWindow: 90,
+  minHoldEpochs: 1,
+  prizeTiers: 3,
+  skimBps: 1000,
+  drawBond: toNano('0.2'),
+};
+
 export const DEFAULT_TIMELOCK = 3600;
 export const DEMO_TIMELOCK = 60;
 

@@ -1,6 +1,6 @@
 // shared: global opcodes, error codes, and shared structures for STONPool.
 // Imported by every contract. Everything here is part of the on-chain wire
-// format and storage ABI. Frozen as of Branch 1 Step 2; any change is breaking.
+// format and storage ABI.  Any change is breaking.
 
 // Standard TEP-74 jetton op codes. The vault receives transfer_notification on
 // the pool jetton wallet and sends transfer to pay out; the rest are here so

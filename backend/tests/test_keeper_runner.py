@@ -8,7 +8,7 @@ from app.keeper import RecordingSender
 from app.keeper.planner import KeeperState, Phase
 from app.keeper.runner import KeeperRunner, build_state, check_config, main, make_sender
 from app.keeper.wallet_sender import WalletSender
-from tests._chain import FakeGetMethodClient
+from tests._chain import FakeGetMethodClient, config_cell
 
 POOL = "0:" + "a2" * 32
 ADP = "0:" + "a1" * 32
@@ -29,11 +29,21 @@ ADAPTER = AdapterState(principal=10_000, lp_balance=10_000, fee_bps=0)
 QUOTE = LpQuote(reserve=12_500, lp_supply=10_000)
 
 
-def _methods(phase, *, epoch=7, deposit_deadline=1000, prize_pot=5000, draw_epoch=6, yielding=True):
+def _methods(
+    phase,
+    *,
+    epoch=7,
+    deposit_deadline=1000,
+    prize_pot=5000,
+    draw_epoch=6,
+    yielding=True,
+    onchain_cutoff=600,
+):
     lp_balance = 10_000
     reserve = 13_000 if yielding else 10_000  # yielding -> lp_value > principal -> harvestable
     return {
         "get_pool_data": [epoch, deposit_deadline, 99_999, prize_pot],
+        "get_config": [config_cell(deposit_cutoff=onchain_cutoff)],
         "get_adapter_data": [0, 10_000, lp_balance, 0, 0, 0, 0, 0, 0],
         "get_lp_quote": [reserve, 10_000],
         "get_phase": [phase],
@@ -61,6 +71,34 @@ async def test_build_state_harvests_then_advances_after_epoch_end():
     assert harvest.phase is Phase.HARVEST
     advance = await build_state(FakeGetMethodClient(_methods(0, yielding=False)), CFG, now=end + 1)
     assert advance.phase is Phase.ADVANCE
+
+
+async def test_build_state_uses_onchain_cutoff_not_settings():
+    # governance shortened deposit_cutoff to 60 while settings still carry the old 600.
+    # epoch_end is deposit_deadline + the ON-CHAIN cutoff, so the keeper must roll at
+    # 1060, not 1600. Trusting the settings copy makes it advance 540s late every epoch.
+    methods = _methods(0, deposit_deadline=1000, yielding=False, onchain_cutoff=60)
+    assert CFG.deposit_cutoff == 600  # the stale copy, deliberately disagreeing
+
+    early = await build_state(FakeGetMethodClient(methods), CFG, now=1059)
+    assert early.phase is Phase.ACCRUING
+
+    on_time = await build_state(FakeGetMethodClient(methods), CFG, now=1061)
+    assert on_time.phase is Phase.ADVANCE
+
+
+async def test_read_pool_config_parses_every_field():
+    from app.clients.sources import read_pool_config
+
+    methods = {"get_config": [config_cell(
+        epoch_length=300, deposit_cutoff=60, commit_window=90, reveal_window=90,
+        min_hold_epochs=1, prize_tiers=3, skim_bps=1000, draw_bond=200_000_000,
+    )]}
+    cfg = await read_pool_config(FakeGetMethodClient(methods), POOL)
+    assert (cfg.epoch_length, cfg.deposit_cutoff) == (300, 60)
+    assert (cfg.commit_window, cfg.reveal_window) == (90, 90)
+    assert (cfg.min_hold_epochs, cfg.prize_tiers, cfg.skim_bps) == (1, 3, 1000)
+    assert cfg.draw_bond == 200_000_000
 
 
 def _runner(sm, provider, *, sender=None, clock=lambda: 5000, interval=0.0):

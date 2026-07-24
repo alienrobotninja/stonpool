@@ -5,7 +5,7 @@ import { internal, toNano, SendMode } from '@ton/core';
 
 // Measures the round-trip a keeper actually faces: submit a state-changing tx, then poll
 // the RPC until it reflects the change. This number has to be well under the commit/reveal
-// windows or every draw orphans at the boundary (HANDOFF section 8). Run against the same
+// windows or every draw orphans at the boundary. Run against the same
 // endpoint the keeper uses. 5 samples, reports min/median/max seconds.
 
 const SAMPLES = 5;
