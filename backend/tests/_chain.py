@@ -41,6 +41,36 @@ def harvest_body(lp, gross, to=A2):
     )
 
 
+def config_cell(
+    *,
+    epoch_length=3600,
+    deposit_cutoff=600,
+    commit_window=900,
+    reveal_window=900,
+    min_hold_epochs=1,
+    prize_tiers=3,
+    skim_bps=1000,
+    draw_bond=1_000_000_000,
+):
+    # mirrors packConfig in contracts/wrappers/protocol.ts; pool-core's get_config returns
+    # exactly this cell, so parsing it here exercises the real layout
+    return {
+        "type": "cell",
+        "value": _boc(
+            begin_cell()
+            .store_uint(epoch_length, 32)
+            .store_uint(deposit_cutoff, 32)
+            .store_uint(commit_window, 32)
+            .store_uint(reveal_window, 32)
+            .store_uint(min_hold_epochs, 16)
+            .store_uint(prize_tiers, 8)
+            .store_uint(skim_bps, 16)
+            .store_coins(draw_bond)
+            .end_cell()
+        ),
+    }
+
+
 def tx(h, lt, now, body, src=None):
     return {
         "hash": h,

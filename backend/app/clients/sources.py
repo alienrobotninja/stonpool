@@ -4,7 +4,7 @@ from typing import Protocol
 from pytoniq_core import Address, Cell, begin_cell
 
 from app.clients.chain import ChainClient
-from app.clients.quote import AdapterState, LpQuote, PoolData
+from app.clients.quote import AdapterState, LpQuote, PoolConfig, PoolData
 from app.core.config import Settings, get_settings
 
 
@@ -37,6 +37,24 @@ async def read_pool_data(client: ChainClient, pool_address: str) -> PoolData:
         deposit_deadline=int(st[1]),
         total_principal=int(st[2]),
         prize_pot=int(st[3]),
+    )
+
+
+async def read_pool_config(client: ChainClient, pool_address: str) -> PoolConfig:
+    # get_config -> a single cell; layout mirrors packConfig in contracts/wrappers/protocol.ts
+    st = await client.run_get_method(pool_address, "get_config")
+    item = st[0]
+    boc = base64.b64decode(item["value"] if isinstance(item, dict) else item)
+    cs = Cell.one_from_boc(boc).begin_parse()
+    return PoolConfig(
+        epoch_length=cs.load_uint(32),
+        deposit_cutoff=cs.load_uint(32),
+        commit_window=cs.load_uint(32),
+        reveal_window=cs.load_uint(32),
+        min_hold_epochs=cs.load_uint(16),
+        prize_tiers=cs.load_uint(8),
+        skim_bps=cs.load_uint(16),
+        draw_bond=cs.load_coins(),
     )
 
 
