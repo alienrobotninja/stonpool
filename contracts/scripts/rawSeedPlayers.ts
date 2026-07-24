@@ -141,6 +141,14 @@ async function main() {
   const cfg = unpackConfig((await rpc('get_config', () => c.runMethod(pool, 'get_config'))).stack.readCell());
   let pd = await readPool();
   if (nowTs() >= pd.deadline) {
+    // AdvanceEpoch throws ERR_BUSY while a draw is outstanding, and this send is NoBounce,
+    // so it would fail silently and surface as "could not open a deposit window". Say what
+    // is actually wrong instead. rawCycle settles a stale draw.
+    if ((await rpc('get_draw_open', () => c.runMethod(pool, 'get_draw_open'))).stack.readBoolean()) {
+      console.error('a draw is still open, so the epoch cannot advance and the window stays shut.');
+      console.error('run scripts/rawCycle.ts to settle it, then re-run this.');
+      process.exit(1);
+    }
     console.log('> deposit window shut, advancing epoch');
     await sendMany('advance', [internal({ to: pool, value: toNano('1'), body: beginCell().storeUint(OP_ADVANCE, 32).storeUint(0, 64).endCell(), bounce: false })]);
     for (let i = 0; i < 25; i++) { await sleep(3); pd = await readPool(); if (nowTs() < pd.deadline) break; }
