@@ -11,10 +11,10 @@ import { commitHashOf, buildCommit, buildReveal } from './demo';
 const OP_ADVANCE = 0x10000004, OP_SETTLE = 0x10000016;
 const reg = JSON.parse(readFileSync('addresses/testnet.json', 'utf8'));
 const env = readFileSync('.env', 'utf8');
-const mnemonic = env.match(/WALLET_MNEMONIC=(.+)/)[1].trim().split(/\s+/);
+const mnemonic = env.match(/WALLET_MNEMONIC=(.+)/)![1].trim().split(/\s+/);
 const apiKey = env.match(/TONCENTER_TESTNET_KEY=(.+)/)?.[1]?.trim();
 const now = () => Math.floor(Date.now() / 1000);
-const sleep = (s) => new Promise(r => setTimeout(r, s * 1000));
+const sleep = (s: number) => new Promise((r) => setTimeout(r, s * 1000));
 
 // layout mirrors packConfig in wrappers/protocol.ts
 function unpackConfig(cell: Cell) {
@@ -34,14 +34,14 @@ async function main() {
   const pool = Address.parse(reg.poolCore);
   const draw = Address.parse(reg.drawEngine);
 
-  const send = async (to, value, body) => {
+  const send = async (to: Address, value: bigint, body: Cell) => {
     const s = await w.getSeqno();
     await w.sendTransfer({ seqno: s, secretKey: key.secretKey, sendMode: SendMode.PAY_GAS_SEPARATELY, messages: [internal({ to, value, body, bounce: false })] });
     for (let i = 0; i < 40; i++) { await sleep(3); if (await w.getSeqno() > s) return; }
     throw new Error('seqno stuck');
   };
   const phase = async () => Number((await c.runMethod(draw, 'get_phase')).stack.readNumber());
-  const waitPhase = async (target, max = 200) => {
+  const waitPhase = async (target: number, max = 200) => {
     for (let i = 0; i < max; i++) { const p = await phase(); console.log('  phase', p); if (p === target) return; await sleep(6); }
     throw new Error('phase never reached ' + target);
   };
@@ -53,6 +53,24 @@ async function main() {
   // so the governed drawBond matches - and if they ever diverge the commit fails loudly with
   // ERR_INSUFFICIENT_BOND rather than silently overpaying every cycle.
   const bond = cfg.drawBond;
+
+  const settleBody = beginCell().storeUint(OP_SETTLE, 32).storeUint(0, 64).endCell();
+  const drawOpen = async () => (await c.runMethod(pool, 'get_draw_open')).stack.readBoolean();
+
+  // Any advance leaves a draw open, so seeding (which advances to reopen the deposit
+  // window) hands us one with nobody committed. pool-core refuses the next advance with
+  // ERR_BUSY while it is outstanding, and the wallet send is NoBounce - it would fail
+  // silently and then hang waiting for a commit window that never opens. Clear it first.
+  // A draw nobody revealed still finalizes: draw-engine falls back to chain entropy.
+  const open = await phase();
+  if (open !== 0 && open !== 4) {
+    console.log('draw already open (phase', open + '); settling it before advancing');
+    if (open < 3) { console.log('  waiting out its commit/reveal windows'); await waitPhase(3); }
+    await send(pool, toNano('0.3'), settleBody);
+    for (let i = 0; i < 30; i++) { await sleep(3); if (!(await drawOpen())) break; }
+    if (await drawOpen()) { console.error('drawOpen still set; use ClearDrawOpen'); return; }
+    console.log('  cleared');
+  }
 
   const pd = await c.runMethod(pool, 'get_pool_data');
   pd.stack.readBigNumber();
@@ -69,7 +87,7 @@ async function main() {
   console.log('await reveal window'); await waitPhase(2);
   console.log('reveal'); await send(draw, toNano('0.1'), buildReveal(secret));
   console.log('await finalize-ready'); await waitPhase(3);
-  console.log('settle'); await send(pool, toNano('0.3'), beginCell().storeUint(OP_SETTLE, 32).storeUint(0, 64).endCell());
+  console.log('settle'); await send(pool, toNano('0.3'), settleBody);
 
   const ds = await c.runMethod(draw, 'get_draw_state');
   const ep = ds.stack.readBigNumber(); ds.stack.readBigNumber(); ds.stack.readBigNumber(); ds.stack.readBoolean();
