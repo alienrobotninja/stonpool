@@ -109,6 +109,19 @@ async function main() {
     return (await rpc('get_wallet_data', () => c.runMethod(addr, 'get_wallet_data'))).stack.readBigNumber();
   };
 
+  // The adapter spends 1 TON of its own balance per deposit (PROVIDE_VALUE) to fund the
+  // provide chain. If it cannot afford that, the notify books principal, fails to send,
+  // and reverts the booking - the jettons land in its wallet unbooked and unrecoverable
+  // while pool-core still counts them. Nothing errors, so check before depositing.
+  const adapterTon = await rpc('adapter balance', () => c.getBalance(Address.parseRaw(reg.adapter)));
+  const needTon = toNano('1.2') * BigInt(WEIGHTS.length);
+  console.log('adapter TON', (Number(adapterTon) / 1e9).toFixed(2), 'need ~', (Number(needTon) / 1e9).toFixed(1));
+  if (adapterTon < needTon) {
+    const top = needTon - adapterTon + toNano('5');
+    console.log('> top up adapter', (Number(top) / 1e9).toFixed(1), 'TON');
+    await sendMany('adapter top-up', [internal({ to: Address.parseRaw(reg.adapter), value: top, body: beginCell().endCell(), bounce: false })]);
+  }
+
   // 1. the faucet mints from its own balance; drained, it fails at the mint hop and the
   // claim looks successful while no jettons arrive
   const fbal = await rpc('faucet balance', () => c.getBalance(faucet));
