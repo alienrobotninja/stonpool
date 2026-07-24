@@ -6,7 +6,7 @@ import { Address, beginCell, internal, toNano, SendMode } from '@ton/core';
 import { packConfig, PoolConfig } from '../wrappers/protocol';
 import { GOVERNED_CONFIG } from './stonpoolPlan';
 
-// Stage 3 step 1: propose GOVERNED_CONFIG to the param-governor. This only stages it -
+// Propose GOVERNED_CONFIG to the param-governor. This only stages it -
 // it becomes live after the timelock, applied by rawExecuteConfig. The governor swaps the
 // config cell without recomputing depositDeadline, so the new timings take effect at the
 // next AdvanceEpoch, not on apply.

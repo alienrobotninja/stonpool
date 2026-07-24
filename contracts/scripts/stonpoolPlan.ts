@@ -33,7 +33,7 @@ export const DEMO_CONFIG: PoolConfig = {
   drawBond: toNano('0.2'),
 };
 
-// Stage 3 target: what the governor proposes over the deployed DEMO_CONFIG. Halves the
+// What the governor proposes over the deployed DEMO_CONFIG. Halves the
 // cycle (epoch 600 -> 300) while keeping commit/reveal well above the keeper's reaction
 // time. minHoldEpochs stays 1 - it is a product property, not a demo knob, and faking it
 // would misrepresent the mechanic. prizeTiers stays 3: it is clamped at runtime to the

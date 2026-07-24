@@ -1,16 +1,31 @@
 import { readFileSync } from 'fs';
 import { mnemonicToPrivateKey } from '@ton/crypto';
 import { TonClient, WalletContractV5R1 } from '@ton/ton';
-import { Address, beginCell, internal, toNano, SendMode } from '@ton/core';
+import { Address, Cell, beginCell, internal, toNano, SendMode } from '@ton/core';
 import { commitHashOf, buildCommit, buildReveal } from './demo';
 
-const OP_ADVANCE = 0x10000004, OP_SETTLE = 0x10000016, DEPOSIT_CUTOFF = 120, BOND = toNano('1');
+// Drives one full cycle: advance -> commit -> reveal -> settle, printing the finalized
+// seed and the resulting pot. Timings come from pool-core's get_config, never from a local
+// constant: the governor can change them at any time and a stale copy mistimes the advance.
+
+const OP_ADVANCE = 0x10000004, OP_SETTLE = 0x10000016;
 const reg = JSON.parse(readFileSync('addresses/testnet.json', 'utf8'));
 const env = readFileSync('.env', 'utf8');
 const mnemonic = env.match(/WALLET_MNEMONIC=(.+)/)[1].trim().split(/\s+/);
 const apiKey = env.match(/TONCENTER_TESTNET_KEY=(.+)/)?.[1]?.trim();
 const now = () => Math.floor(Date.now() / 1000);
 const sleep = (s) => new Promise(r => setTimeout(r, s * 1000));
+
+// layout mirrors packConfig in wrappers/protocol.ts
+function unpackConfig(cell: Cell) {
+  const s = cell.beginParse();
+  return {
+    epochLength: s.loadUint(32), depositCutoff: s.loadUint(32),
+    commitWindow: s.loadUint(32), revealWindow: s.loadUint(32),
+    minHoldEpochs: s.loadUint(16), prizeTiers: s.loadUint(8),
+    skimBps: s.loadUint(16), drawBond: s.loadCoins(),
+  };
+}
 
 async function main() {
   const c = new TonClient({ endpoint: 'https://testnet.toncenter.com/api/v2/jsonRPC', apiKey });
@@ -31,10 +46,18 @@ async function main() {
     throw new Error('phase never reached ' + target);
   };
 
+  const cfg = unpackConfig((await c.runMethod(pool, 'get_config')).stack.readCell());
+  console.log('config epoch', cfg.epochLength, 'cutoff', cfg.depositCutoff, 'commit', cfg.commitWindow, 'reveal', cfg.revealWindow);
+  // The draw-engine runs the windows and bond it was DEPLOYED with; pool-core's config is
+  // not forwarded to it and it exposes no bond getter. Both were seeded from the same preset,
+  // so the governed drawBond matches - and if they ever diverge the commit fails loudly with
+  // ERR_INSUFFICIENT_BOND rather than silently overpaying every cycle.
+  const bond = cfg.drawBond;
+
   const pd = await c.runMethod(pool, 'get_pool_data');
   pd.stack.readBigNumber();
   const deadline = Number(pd.stack.readBigNumber());
-  const epochEnd = deadline + DEPOSIT_CUTOFF;
+  const epochEnd = deadline + cfg.depositCutoff;
   const wait = epochEnd - now() + 5;
   if (wait > 0) { console.log('waiting', wait, 's for epoch end'); await sleep(wait); }
 
@@ -42,7 +65,7 @@ async function main() {
   console.log('await commit window'); await waitPhase(1);
 
   const secret = BigInt('0x' + [...crypto.getRandomValues(new Uint8Array(31))].map(b => b.toString(16).padStart(2, '0')).join(''));
-  console.log('commit'); await send(draw, BOND + toNano('0.1'), buildCommit(commitHashOf(secret)));
+  console.log('commit'); await send(draw, bond + toNano('0.1'), buildCommit(commitHashOf(secret)));
   console.log('await reveal window'); await waitPhase(2);
   console.log('reveal'); await send(draw, toNano('0.1'), buildReveal(secret));
   console.log('await finalize-ready'); await waitPhase(3);

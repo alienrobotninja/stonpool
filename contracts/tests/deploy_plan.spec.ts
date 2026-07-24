@@ -35,15 +35,17 @@ describe('stonpool deploy plan', () => {
     expect(c.commitWindow + c.revealWindow).toBeLessThanOrEqual(c.epochLength);
   });
 
-  // The slack between the draw windows and the epoch is the orphan margin: if a draw has
-  // not settled when the next advance lands, the advance throws ERR_BUSY. Keep it wide
-  // enough that the keeper has many poll cycles to settle in.
-  it('governed config speeds up the cycle while keeping orphan margin', () => {
-    const g = GOVERNED_CONFIG;
-    const cycle = (c: typeof g) => c.epochLength + c.commitWindow + c.revealWindow;
-    expect(cycle(g)).toBeLessThan(cycle(DEMO_CONFIG));
-    expect(g.epochLength - (g.commitWindow + g.revealWindow)).toBeGreaterThanOrEqual(90);
-    expect(g.minHoldEpochs).toBe(DEMO_CONFIG.minHoldEpochs); // product property, unchanged
+  // The draw-engine keeps its OWN commitWindow/revealWindow in DrawStorage, fixed at deploy
+  // time; pool-core's ParamsUpdated does not forward to it and it has no reconfigure op. So
+  // governing those two fields does NOT shorten a draw - the engine still runs the windows
+  // it was deployed with. The margin that matters is the governed epoch minus the DEPLOYED
+  // draw duration: if a draw has not settled when the next advance lands, it hits ERR_BUSY.
+  it('governed epoch outlasts the draw the deployed engine actually runs', () => {
+    const deployedDraw = DEMO_CONFIG.commitWindow + DEMO_CONFIG.revealWindow;
+    const cycle = (c: typeof GOVERNED_CONFIG) => c.epochLength + c.commitWindow + c.revealWindow;
+    expect(cycle(GOVERNED_CONFIG)).toBeLessThan(cycle(DEMO_CONFIG)); // still a speed-up
+    expect(GOVERNED_CONFIG.epochLength - deployedDraw).toBeGreaterThanOrEqual(60);
+    expect(GOVERNED_CONFIG.minHoldEpochs).toBe(DEMO_CONFIG.minHoldEpochs); // product property
   });
 
   it('is deterministic for identical inputs', () => {

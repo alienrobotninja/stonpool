@@ -6,7 +6,7 @@ import { Address, Cell, beginCell, internal, toNano, SendMode } from '@ton/core'
 import { PoolConfig } from '../wrappers/protocol';
 import { GOVERNED_CONFIG } from './stonpoolPlan';
 
-// Stage 3 step 2: apply the staged config once the timelock has elapsed, then prove it
+// Apply the staged config once the timelock has elapsed, then prove it
 // landed on BOTH the governor and pool-core. That second check is the point: the governor
 // forwards ParamsUpdated NoBounce, so if pool-core's ROLE_GOVERNOR does not match this
 // governor it rejects with 401 and the governor never finds out - the governor would read
