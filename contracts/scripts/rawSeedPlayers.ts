@@ -4,6 +4,7 @@ import { mnemonicToPrivateKey } from '@ton/crypto';
 import { TonClient, WalletContractV5R1 } from '@ton/ton';
 import { Address, Cell, beginCell, contractAddress, internal, toNano, SendMode } from '@ton/core';
 import { walletData } from '../wrappers/mockStack';
+import { derivePlayers, UNIT, WEIGHTS } from './demoPlayers';
 
 // Seeds a field of depositors from ONE funded wallet. pool-core lets a deposit name its
 // beneficiary in the forward payload (pool_core.tolk: beneficiary defaults to msg.sender,
@@ -21,8 +22,6 @@ const OP_DEPOSIT = 0x10000001;
 const OP_REQUEST_TOKENS = 0x10000052;
 const OP_ADVANCE = 0x10000004;
 
-const UNIT = 10n ** 6n; // jUSDT has 6 decimals
-const WEIGHTS = [25n, 30n, 35n, 40n, 45n, 50n, 55n, 60n, 70n, 80n, 100n, 120n]; // 710 total
 const DEPOSIT_VALUE = toNano('0.7'); // TON attached per deposit message
 const FORWARD_TON = toNano('0.6'); // must fund the whole notify -> adapter -> router chain
 const FAUCET_MIN_TON = toNano('0.5'); // 0.4 per claim (0.2 x 2 minters); top up below this
@@ -87,13 +86,7 @@ async function main() {
   const walletCode = Cell.fromBoc(Buffer.from(JSON.parse(readFileSync(resolve('build/MockJettonWallet.compiled.json'), 'utf8')).hex, 'hex'))[0];
   const myJetton = contractAddress(0, { code: walletCode, data: walletData(0n, me, minter) });
 
-  // subwallet 0 is the operator itself, so players start at 1. Same key throughout: these
-  // are addresses we can sign for, not throwaways that could never withdraw.
-  const players = WEIGHTS.map((_, i) =>
-    WalletContractV5R1.create({
-      publicKey: key.publicKey,
-      walletId: { networkGlobalId: -239, context: { walletVersion: 'v5r1', workchain: 0, subwalletNumber: i + 1 } },
-    }).address);
+  const players = derivePlayers(key.publicKey);
 
   const need = WEIGHTS.reduce((a, b) => a + b, 0n) * UNIT;
   console.log('operator', me.toString({ testOnly: true, bounceable: false }));
