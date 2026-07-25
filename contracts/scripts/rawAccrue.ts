@@ -133,8 +133,8 @@ async function main() {
     process.exit(1);
   }
 
-  // 1. custody: the underlying has to actually reach the router, or the reserve bump in
-  // step 2 is backed by nothing. forwardTon 0 so no notification is raised on the router.
+  // 1. custody: the underlying has to actually reach the router, or the reserve bump that
+  // follows is backed by nothing. forwardTon 0 so no notification is raised on the router.
   const transferBody = beginCell()
     .storeUint(OP_TRANSFER, 32).storeUint(0, 64).storeCoins(amount)
     .storeAddress(router).storeAddress(me).storeMaybeRef(null)
