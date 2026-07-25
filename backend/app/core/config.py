@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     deposit_cutoff: int = 600  # epoch_end = deposit_deadline + deposit_cutoff; matches deploy
 
     indexer_poll_interval: int = 10
+    # refresh() costs a get-method per depositor plus five pool reads, so it runs on a
+    # slower clock than the indexer; the tables it writes only move when a deposit lands
+    derive_poll_interval: int = 60
 
     # keeper runtime
     operator_mnemonic: str = ""  # 24 words; empty -> dry-run (RecordingSender, no broadcast)
