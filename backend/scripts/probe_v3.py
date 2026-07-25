@@ -5,6 +5,7 @@ import json
 from collections import Counter
 from pathlib import Path
 
+import certifi
 import httpx
 from pytoniq_core import Cell
 
@@ -23,7 +24,11 @@ def opcode(body_b64):
 
 async def get(cfg, params):
     headers = {"X-API-Key": cfg.toncenter_api_key} if cfg.toncenter_api_key else {}
-    async with httpx.AsyncClient(base_url=cfg.toncenter_base_url, timeout=30.0) as c:
+    # pinned to certifi: httpx hands a stale SSL_CERT_FILE straight to the ssl module and
+    # dies on a missing path before it ever opens a socket
+    async with httpx.AsyncClient(
+        base_url=cfg.toncenter_base_url, timeout=30.0, verify=certifi.where()
+    ) as c:
         r = await c.get("/transactions", params=params, headers=headers)
     print(f"GET {r.request.url} -> {r.status_code}")
     if r.status_code != 200:
