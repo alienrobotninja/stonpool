@@ -26,8 +26,15 @@ const mnemonic = env.match(/WALLET_MNEMONIC=(.+)/)[1].trim().split(/\s+/);
 const apiKey = env.match(/TONCENTER_TESTNET_KEY=(.+)/)?.[1]?.trim();
 const load = (n) => Cell.fromBoc(Buffer.from(JSON.parse(readFileSync(`build/${n}.compiled.json`, 'utf8')).hex, 'hex'))[0];
 
+// The adapter spends PROVIDE_VALUE (1 TON) of its OWN balance per deposit to fund the
+// provide chain, and a deposit only forwards it DEPOSIT_FWD_TON (0.05). Under-fund it and
+// every notify books principal, fails to send the provide, and reverts the booking - the
+// jettons stay in its wallet, unbooked and unrecoverable, while pool-core still counts
+// them. Size this for the whole demo: one provide per deposit plus burns per harvest.
+const ADAPTER_RESERVE = toNano('30');
+
 const VALUE = {
-  poolCore: toNano('0.3'), adapter: toNano('0.3'), vault: toNano('0.15'),
+  poolCore: toNano('0.3'), adapter: ADAPTER_RESERVE, vault: toNano('0.15'),
   drawEngine: toNano('0.15'), governor: toNano('0.15'), router: toNano('0.15'), stonfiPool: toNano('0.2'),
 };
 
