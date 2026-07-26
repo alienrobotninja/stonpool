@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,20 +8,30 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import draws, epochs, events, health, pool, positions, wallet
 from app.db.session import init_engine
 from app.indexer.runner import run_forever as run_indexer
+from app.services.derive_runner import run_forever as run_deriver
+
+LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # uvicorn configures its own loggers and leaves the root at WARNING, so every log.info
+    # from the indexer and the deriver was dropped before it reached a handler; a working
+    # indexer and a dead one produced identical output
+    logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
     # ASGITransport (tests) does not run lifespan, so the test session factory stays in
-    # place; under uvicorn this binds the real engine on startup. The indexer rides in
-    # this process so the api machine (min_machines_running=1) keeps the DB current;
-    # run_indexer no-ops if no contract addresses are configured.
+    # place; under uvicorn this binds the real engine on startup. The indexer and the
+    # deriver ride in this process so the api machine (min_machines_running=1) keeps both
+    # the event tables and the read model current; each no-ops if its addresses are unset.
     init_engine()
     stop = asyncio.Event()
-    task = asyncio.create_task(run_indexer(stop))
+    tasks = [
+        asyncio.create_task(run_indexer(stop)),
+        asyncio.create_task(run_deriver(stop)),
+    ]
     yield
     stop.set()
-    await task
+    await asyncio.gather(*tasks)
 
 
 def create_app() -> FastAPI:

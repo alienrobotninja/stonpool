@@ -26,12 +26,14 @@ const mnemonic = env.match(/WALLET_MNEMONIC=(.+)/)[1].trim().split(/\s+/);
 const apiKey = env.match(/TONCENTER_TESTNET_KEY=(.+)/)?.[1]?.trim();
 const load = (n) => Cell.fromBoc(Buffer.from(JSON.parse(readFileSync(`build/${n}.compiled.json`, 'utf8')).hex, 'hex'))[0];
 
-// The adapter spends PROVIDE_VALUE (1 TON) of its OWN balance per deposit to fund the
-// provide chain, and a deposit only forwards it DEPOSIT_FWD_TON (0.05). Under-fund it and
-// every notify books principal, fails to send the provide, and reverts the booking - the
-// jettons stay in its wallet, unbooked and unrecoverable, while pool-core still counts
-// them. Size this for the whole demo: one provide per deposit plus burns per harvest.
-const ADAPTER_RESERVE = toNano('30');
+// The adapter funds the provide chain from its OWN balance - PROVIDE_VALUE (1 TON) per
+// deposit against the DEPOSIT_FWD_TON (0.05) the notify carries in, so 0.97 has to be
+// resident per deposit and the seed burst fires all twelve in one wallet tx. Under-fund it
+// and every notify books principal, fails to send the provide, and reverts the booking,
+// leaving the jettons unbooked in its wallet while pool-core still counts them. This clears
+// the burst with margin; the seeder tops up on demand for larger fields. Nothing ever sends
+// TON back out of the adapter, so oversizing locks it there for good.
+const ADAPTER_RESERVE = toNano('15');
 
 const VALUE = {
   poolCore: toNano('0.3'), adapter: ADAPTER_RESERVE, vault: toNano('0.15'),
