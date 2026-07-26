@@ -85,9 +85,9 @@ export async function run(provider: NetworkProvider, args: string[] = []) {
 
   const poolCore = await deploy('pool-core', PoolCore.createFromConfig({ epoch: 1, genesis, admin, config: plan.config }, codes.poolCore), VALUE.poolCore);
   const adapter = await deploy('yield-adapter-stonfi', YieldAdapterStonfi.createFromConfig(admin, codes.adapter), VALUE.adapter);
-  const vault = await deploy('jetton-vault', JettonVault.createFromConfig(admin, codes.vault), VALUE.vault);
-  const router = await deploy('mock-stonfi-router', MockStonfiRouter.createFromConfig(admin, codes.router), VALUE.router);
-  const stonfiPool = await deploy('mock-stonfi-pool', MockStonfiPool.createFromConfig(admin, codes.wallet, codes.stonfiPool), VALUE.stonfiPool);
+  const vault = await deploy('jetton-vault', JettonVault.createFromConfig(admin, codes.vault, genesis), VALUE.vault);
+  const router = await deploy('mock-stonfi-router', MockStonfiRouter.createFromConfig(admin, codes.router, genesis), VALUE.router);
+  const stonfiPool = await deploy('mock-stonfi-pool', MockStonfiPool.createFromConfig(admin, codes.wallet, codes.stonfiPool, genesis), VALUE.stonfiPool);
   const drawEngine = await deploy('draw-engine', DrawEngine.createFromConfig({ poolCore: c.poolCore, commitWindow: plan.config.commitWindow, revealWindow: plan.config.revealWindow, drawBond: plan.config.drawBond }, codes.drawEngine), VALUE.drawEngine);
   const governor = await deploy('param-governor', ParamGovernor.createFromConfig({ admin, poolCore: c.poolCore, timelockDelay: plan.timelock, config: plan.config }, codes.governor), VALUE.governor);
 
