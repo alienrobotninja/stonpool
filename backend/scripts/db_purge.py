@@ -59,12 +59,21 @@ async def main():
         else:
             for t in reversed(TABLES):
                 await db.execute(text(f"delete from {t}"))
+
+        # count before the commit: if these are zero the delete itself worked, and any
+        # rows present afterwards were written back by a live indexer or deriver
+        emptied = await counts(db)
         await db.commit()
 
         after = await counts(db)
         show("\nafter", after)
+        if any(emptied.values()):
+            raise SystemExit("delete failed; rows survived the statement")
         if any(after.values()):
-            raise SystemExit("purge incomplete")
+            raise SystemExit(
+                "deleted, then refilled: the api is still writing. stop the machine, or "
+                "point it at the new deployment first"
+            )
         print("\npurged")
 
 
