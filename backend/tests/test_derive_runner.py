@@ -1,10 +1,12 @@
 import asyncio
 
+import pytest
+
 from app.clients.sources import MockPoolQuoteSource
 from app.core.config import Settings
 from app.repositories import EventRepo, StateRepo
 from app.services import derive_runner
-from app.services.derive import DriftReport
+from app.services.derive import DerivedService, DriftReport
 from app.services.derive_runner import missing_addresses, refresh_once, run_forever
 from tests._chain import FakeGetMethodClient
 
@@ -83,3 +85,25 @@ async def test_a_failed_tick_does_not_stop_the_loop(sm, monkeypatch):
     monkeypatch.setattr(derive_runner, "refresh_once", flaky)
     await run_forever(stop, cfg=_wired(), client=_client(), session_factory=sm)
     assert len(calls) == 2
+
+
+async def test_a_late_failure_keeps_what_the_earlier_phases_wrote(sm, monkeypatch):
+    async with sm() as db:
+        await EventRepo(db).add_deposit(
+            tx_hash="d2" + "0" * 62, lt=2, ts=2, depositor=D1, amount=4_000
+        )
+        await db.commit()
+
+    async def boom(self):
+        raise RuntimeError("429 on the last read")
+
+    monkeypatch.setattr(DerivedService, "check_drift", boom)
+
+    client = _client()
+    with pytest.raises(RuntimeError):
+        await refresh_once(client, MockPoolQuoteSource(client, SF), _wired(), session_factory=sm)
+
+    async with sm() as db:
+        state = StateRepo(db)
+        assert [p.address for p in await state.list_positions(limit=10)] == [D1]
+        assert await state.latest_snapshot() is not None

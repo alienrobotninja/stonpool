@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     # toncenter v3 access, used by the chain client from B6.S4 onward
     toncenter_base_url: str = "https://testnet.toncenter.com/api/v3"
     toncenter_api_key: str = ""
+    toncenter_min_interval: float = 0.12  # seconds between calls; the key is capped per second
+    toncenter_max_retries: int = 4
 
     # deployed contract addresses (raw 0:hex or friendly), set per environment
     pool_core_address: str = ""

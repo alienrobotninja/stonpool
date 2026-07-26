@@ -30,9 +30,14 @@ async def refresh_once(
 ) -> DriftReport:
     sm = session_factory or get_sessionmaker()
     async with sm() as db:
-        report = await DerivedService(client, quotes, db, cfg).refresh()
+        svc = DerivedService(client, quotes, db, cfg)
+        # commit per phase. a rate-limit trip in the last read used to roll back every
+        # position row and snapshot the earlier phases had already written
+        await svc.reconcile_positions()
         await db.commit()
-    return report
+        await svc.capture_snapshot()
+        await db.commit()
+        return await svc.check_drift()
 
 
 async def run_forever(
