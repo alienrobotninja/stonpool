@@ -100,11 +100,13 @@ export function buildPlan(input: PlanInput): Plan {
   const at = (code: Cell, data: Cell) => contractAddress(0, { code, data });
 
   const poolCore = at(codes.poolCore, poolCoreData({ epoch, genesis, admin, config }));
-  // seed poolCore into the adapter init so its address is deployment-scoped (fresh state per redeploy)
+  // every stateful contract is scoped to the deployment: the adapter through poolCore, the
+  // rest through genesis. without it their init data is identical run to run, the deployer
+  // finds them already active and skips them, and the new stack inherits the old state.
   const adapter = at(codes.adapter, yieldAdapterStonfiData(admin, poolCore));
-  const vault = at(codes.vault, jettonVaultData(admin));
-  const router = at(codes.router, mockStonfiRouterData(admin));
-  const stonfiPool = at(codes.stonfiPool, mockStonfiPoolData(admin, codes.wallet));
+  const vault = at(codes.vault, jettonVaultData(admin, genesis));
+  const router = at(codes.router, mockStonfiRouterData(admin, genesis));
+  const stonfiPool = at(codes.stonfiPool, mockStonfiPoolData(admin, codes.wallet, genesis));
   const drawEngine = at(codes.drawEngine, drawEngineData({
     poolCore, commitWindow: config.commitWindow, revealWindow: config.revealWindow, drawBond: config.drawBond,
   }));

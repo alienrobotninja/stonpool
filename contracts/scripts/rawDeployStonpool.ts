@@ -82,9 +82,9 @@ async function main() {
   const inits = {
     poolCore: { code: codes.poolCore, data: poolCoreData({ epoch: 1, genesis, admin, config: cfg }) },
     adapter: { code: codes.adapter, data: yieldAdapterStonfiData(admin, cr.poolCore) },
-    vault: { code: codes.vault, data: jettonVaultData(admin) },
-    router: { code: codes.router, data: mockStonfiRouterData(admin) },
-    stonfiPool: { code: codes.stonfiPool, data: mockStonfiPoolData(admin, codes.wallet) },
+    vault: { code: codes.vault, data: jettonVaultData(admin, genesis) },
+    router: { code: codes.router, data: mockStonfiRouterData(admin, genesis) },
+    stonfiPool: { code: codes.stonfiPool, data: mockStonfiPoolData(admin, codes.wallet, genesis) },
     drawEngine: { code: codes.drawEngine, data: drawEngineData({ poolCore: cr.poolCore, commitWindow: cfg.commitWindow, revealWindow: cfg.revealWindow, drawBond: cfg.drawBond }) },
     governor: { code: codes.governor, data: paramGovernorData({ admin, poolCore: cr.poolCore, timelockDelay: plan.timelock, config: cfg }) },
   };

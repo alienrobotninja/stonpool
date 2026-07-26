@@ -17,6 +17,9 @@ struct RouterStorage {
     adminAddress: address
     jettonWallet: address?
     pool: address?
+    // unused by any handler. scopes the address to one deployment, matching the pool it
+    // fronts, so the pair is always replaced together.
+    genesis: uint32
 }
 
 fun RouterStorage.load() {

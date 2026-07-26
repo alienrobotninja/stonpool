@@ -19,6 +19,7 @@ const CFG: PoolConfig = {
   revealWindow: REVEAL_WINDOW, minHoldEpochs: 1, prizeTiers: 3, skimBps: 1000, drawBond: DRAW_BOND,
 };
 
+const GEN = 1_700_000_000; // any deployment stamp; the point is that it lands in the cell
 const admin = Address.parseRaw('0:' + '11'.repeat(32));
 const pool = Address.parseRaw('0:' + '22'.repeat(32));
 const walletCode = beginCell().storeUint(0xc0de, 16).endCell();
@@ -53,8 +54,8 @@ describe('deploy wrappers reproduce the sandbox init-data byte-for-byte', () => 
   });
 
   it('jetton-vault', () => {
-    const inline = beginCell().storeAddress(admin).storeAddress(null).storeAddress(null).storeCoins(0).endCell();
-    expect(data(JettonVault.createFromConfig(admin, code)).equals(inline)).toBe(true);
+    const inline = beginCell().storeAddress(admin).storeAddress(null).storeAddress(null).storeCoins(0).storeUint(GEN, 32).endCell();
+    expect(data(JettonVault.createFromConfig(admin, code, GEN)).equals(inline)).toBe(true);
   });
 
   it('yield-adapter-stonfi', () => {
@@ -80,12 +81,12 @@ describe('deploy wrappers reproduce the sandbox init-data byte-for-byte', () => 
   });
 
   it('mock-stonfi-router', () => {
-    const inline = beginCell().storeAddress(admin).storeAddress(null).storeAddress(null).endCell();
-    expect(data(MockStonfiRouter.createFromConfig(admin, code)).equals(inline)).toBe(true);
+    const inline = beginCell().storeAddress(admin).storeAddress(null).storeAddress(null).storeUint(GEN, 32).endCell();
+    expect(data(MockStonfiRouter.createFromConfig(admin, code, GEN)).equals(inline)).toBe(true);
   });
 
   it('mock-stonfi-pool', () => {
-    const inline = beginCell().storeAddress(admin).storeAddress(null).storeCoins(0).storeCoins(0).storeRef(walletCode).endCell();
-    expect(data(MockStonfiPool.createFromConfig(admin, walletCode, code)).equals(inline)).toBe(true);
+    const inline = beginCell().storeAddress(admin).storeAddress(null).storeCoins(0).storeCoins(0).storeRef(walletCode).storeUint(GEN, 32).endCell();
+    expect(data(MockStonfiPool.createFromConfig(admin, walletCode, code, GEN)).equals(inline)).toBe(true);
   });
 });

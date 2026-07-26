@@ -22,6 +22,10 @@ struct PoolStorage {
     reserve: coins
     lpSupply: coins
     lpWalletCode: cell
+    // unused by any handler. without it the address is identical across deployments, so a
+    // redeploy reuses a venue still holding the previous run's reserve and lpSupply, and
+    // every later AccrueYield is shared with LP that belongs to a dead adapter.
+    genesis: uint32
 }
 
 fun PoolStorage.load() {
