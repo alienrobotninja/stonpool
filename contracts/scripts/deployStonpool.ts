@@ -13,7 +13,12 @@ import { writeRegistry } from './addresses';
 
 const VALUE = {
   poolCore: toNano('0.3'),
-  adapter: toNano('0.3'),
+  // the adapter funds the provide chain from its own balance, roughly 0.97 per deposit
+  // against the 0.05 the notify carries in, and a seed burst fires every deposit at once.
+  // under-fund it and each notify books principal, fails to send the provide, and reverts
+  // the booking, leaving jettons unbooked while pool-core still counts them. see
+  // ADAPTER_RESERVE in rawDeployStonpool.ts for the full derivation.
+  adapter: toNano('15'),
   vault: toNano('0.15'),
   drawEngine: toNano('0.15'),
   governor: toNano('0.15'),
