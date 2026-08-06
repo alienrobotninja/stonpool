@@ -3,15 +3,15 @@ import {
 } from '@ton/core';
 import { OP } from './protocol';
 
-export function jettonVaultData(admin: Address): Cell {
-  return beginCell().storeAddress(admin).storeAddress(null).storeAddress(null).storeCoins(0).endCell();
+export function jettonVaultData(admin: Address, genesis: number): Cell {
+  return beginCell().storeAddress(admin).storeAddress(null).storeAddress(null).storeCoins(0).storeUint(genesis, 32).endCell();
 }
 
 export class JettonVault implements Contract {
   constructor(readonly address: Address, readonly init?: { code: Cell; data: Cell }) {}
 
-  static createFromConfig(admin: Address, code: Cell, workchain = 0) {
-    const init = { code, data: jettonVaultData(admin) };
+  static createFromConfig(admin: Address, code: Cell, genesis: number, workchain = 0) {
+    const init = { code, data: jettonVaultData(admin, genesis) };
     return new JettonVault(contractAddress(workchain, init), init);
   }
 

@@ -3,15 +3,15 @@ import {
 } from '@ton/core';
 import { OP } from './protocol';
 
-export function mockStonfiRouterData(admin: Address): Cell {
-  return beginCell().storeAddress(admin).storeAddress(null).storeAddress(null).endCell();
+export function mockStonfiRouterData(admin: Address, genesis: number): Cell {
+  return beginCell().storeAddress(admin).storeAddress(null).storeAddress(null).storeUint(genesis, 32).endCell();
 }
 
 export class MockStonfiRouter implements Contract {
   constructor(readonly address: Address, readonly init?: { code: Cell; data: Cell }) {}
 
-  static createFromConfig(admin: Address, code: Cell, workchain = 0) {
-    const init = { code, data: mockStonfiRouterData(admin) };
+  static createFromConfig(admin: Address, code: Cell, genesis: number, workchain = 0) {
+    const init = { code, data: mockStonfiRouterData(admin, genesis) };
     return new MockStonfiRouter(contractAddress(workchain, init), init);
   }
 

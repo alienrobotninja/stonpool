@@ -3,15 +3,15 @@ import {
 } from '@ton/core';
 import { OP } from './protocol';
 
-export function mockStonfiPoolData(admin: Address, walletCode: Cell): Cell {
-  return beginCell().storeAddress(admin).storeAddress(null).storeCoins(0).storeCoins(0).storeRef(walletCode).endCell();
+export function mockStonfiPoolData(admin: Address, walletCode: Cell, genesis: number): Cell {
+  return beginCell().storeAddress(admin).storeAddress(null).storeCoins(0).storeCoins(0).storeRef(walletCode).storeUint(genesis, 32).endCell();
 }
 
 export class MockStonfiPool implements Contract {
   constructor(readonly address: Address, readonly init?: { code: Cell; data: Cell }) {}
 
-  static createFromConfig(admin: Address, walletCode: Cell, code: Cell, workchain = 0) {
-    const init = { code, data: mockStonfiPoolData(admin, walletCode) };
+  static createFromConfig(admin: Address, walletCode: Cell, code: Cell, genesis: number, workchain = 0) {
+    const init = { code, data: mockStonfiPoolData(admin, walletCode, genesis) };
     return new MockStonfiPool(contractAddress(workchain, init), init);
   }
 

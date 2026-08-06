@@ -13,6 +13,9 @@ struct VaultStorage {
     poolCore: address?
     jettonWallet: address?
     potBalance: coins
+    // unused by any handler. scopes the address to one deployment so a redeploy cannot
+    // inherit a previous epoch's pot.
+    genesis: uint32
 }
 
 fun VaultStorage.load() { return VaultStorage.fromCell(contract.getData()) }

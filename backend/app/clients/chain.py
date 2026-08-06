@@ -1,8 +1,13 @@
+import asyncio
+import random
+import time
 from typing import Any, Protocol
 
 import httpx
 
 from app.core.config import Settings, get_settings
+
+RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
 
 
 class ChainClient(Protocol):
@@ -33,6 +38,8 @@ class ToncenterClient:
     def __init__(self, cfg: Settings | None = None, client: httpx.AsyncClient | None = None):
         self.cfg = cfg or get_settings()
         self._client = client
+        self._gate = asyncio.Lock()
+        self._last = 0.0
 
     def _headers(self) -> dict:
         h = {"Content-Type": "application/json"}
@@ -45,32 +52,54 @@ class ToncenterClient:
             self._client = httpx.AsyncClient(base_url=self.cfg.toncenter_base_url, timeout=15.0)
         return self._client
 
+    async def _pace(self) -> None:
+        # toncenter caps requests per second. one derive pass fires a get-method per
+        # depositor back to back, which outruns the cap partway through and costs the whole
+        # pass, so hold a floor between calls instead of discovering the limit by hitting it
+        async with self._gate:
+            wait = self._last + self.cfg.toncenter_min_interval - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._last = time.monotonic()
+
+    async def _request(self, method: str, url: str, retry: bool = True, **kw) -> httpx.Response:
+        tries = self.cfg.toncenter_max_retries if retry else 0
+        for attempt in range(tries + 1):
+            await self._pace()
+            c = await self._http()
+            r = await c.request(method, url, headers=self._headers(), **kw)
+            if r.status_code not in RETRY_STATUS or attempt == tries:
+                r.raise_for_status()
+                return r
+            # honour Retry-After when toncenter sends one; jitter the fallback so the
+            # indexer and the deriver do not line back up on the same second
+            after = r.headers.get("retry-after")
+            delay = float(after) if after else 0.5 * 2**attempt
+            await asyncio.sleep(delay + random.uniform(0, 0.1))
+        raise AssertionError("unreachable")
+
     async def run_get_method(self, address, method, stack=None):
-        c = await self._http()
-        r = await c.post(
+        r = await self._request(
+            "POST",
             "/runGetMethod",
             json={"address": address, "method": method, "stack": stack or []},
-            headers=self._headers(),
         )
-        r.raise_for_status()
         data = r.json()
         if data.get("exit_code", 0) != 0:
             raise RuntimeError(f"get-method {method} on {address} exited {data.get('exit_code')}")
         return decode_stack(data.get("stack", []))
 
     async def get_transactions(self, address, *, after_lt=0, limit=50):
-        c = await self._http()
         params: dict = {"account": address, "limit": limit, "sort": "asc"}
         if after_lt:
             params["start_lt"] = after_lt + 1
-        r = await c.get("/transactions", params=params, headers=self._headers())
-        r.raise_for_status()
+        r = await self._request("GET", "/transactions", params=params)
         return r.json().get("transactions", [])
 
     async def send_boc(self, boc_b64: str) -> str:
-        c = await self._http()
-        r = await c.post("/message", json={"boc": boc_b64}, headers=self._headers())
-        r.raise_for_status()
+        # no retry: a 5xx can still have landed the message, and resending risks a second
+        # broadcast of the same external
+        r = await self._request("POST", "/message", retry=False, json={"boc": boc_b64})
         return r.json().get("message_hash", "")
 
     async def aclose(self):

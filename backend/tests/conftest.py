@@ -1,10 +1,24 @@
+import os
+
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 import app.db.session as session_mod
 import app.models  # noqa: F401  registers all tables on Base.metadata
+from app.core.config import get_settings
 from app.db.base import Base
+
+
+@pytest.fixture(autouse=True)
+def isolate_settings_env(monkeypatch):
+    # BaseSettings reads os.environ whatever _env_file says, so a shell left holding
+    # STONPOOL_* exports from an ops script rewrites every Settings() a test builds and
+    # turns unrelated suites red
+    for key in [k for k in os.environ if k.startswith("STONPOOL_")]:
+        monkeypatch.delenv(key, raising=False)
+    get_settings.cache_clear()
 
 
 @pytest_asyncio.fixture
